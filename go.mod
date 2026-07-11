@@ -1,3 +1,3 @@
 module github.com/thedaneeffect/go-divoom
 
-go 1.26.2
+go 1.24
