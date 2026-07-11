@@ -60,6 +60,30 @@ func TestPaletteImage(t *testing.T) {
 	}
 }
 
+// Semi-transparent pixels above the alpha threshold must keep their straight
+// (non-premultiplied) color, matching the Python reference which reads raw
+// RGBA channels. Premultiplied conversion would yield {100,0,0} here.
+func TestPaletteImageStraightAlpha(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.Set(x, y, color.NRGBA{255, 0, 0, 255})
+		}
+	}
+	img.Set(5, 5, color.NRGBA{200, 0, 0, 128}) // alpha 128 > 32 threshold
+
+	palette, pixels, err := paletteImage(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(palette) != 2 || palette[1] != [3]uint8{200, 0, 0} {
+		t.Fatalf("palette = %v, want second entry {200 0 0}", palette)
+	}
+	if pixels[5*16+5] != 1 {
+		t.Errorf("semi-transparent pixel index = %d, want 1", pixels[5*16+5])
+	}
+}
+
 func TestPaletteImageRejectsBadSize(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 20, 20))
 	if _, _, err := paletteImage(img); err == nil {
