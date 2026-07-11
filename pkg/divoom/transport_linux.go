@@ -31,5 +31,14 @@ func DialRFCOMM(mac string, channel uint8) (Transport, error) {
 		unix.Close(fd)
 		return nil, fmt.Errorf("divoom: rfcomm connect %s: %w", mac, err)
 	}
+	// os.NewFile only makes the fd pollable (and thus SetReadDeadline
+	// functional) if it is already in non-blocking mode; otherwise the
+	// runtime falls back to a blocking file whose SetReadDeadline always
+	// returns os.ErrNoDeadline. Ping relies on a working read deadline, so
+	// this must be set before handing the fd to os.NewFile.
+	if err := unix.SetNonblock(fd, true); err != nil {
+		unix.Close(fd)
+		return nil, fmt.Errorf("divoom: rfcomm set nonblock %s: %w", mac, err)
+	}
 	return os.NewFile(uintptr(fd), "rfcomm:"+mac), nil
 }
