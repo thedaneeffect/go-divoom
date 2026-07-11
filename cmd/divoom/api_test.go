@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -17,10 +18,37 @@ import (
 	"github.com/thedaneeffect/go-divoom/pkg/divoom"
 )
 
-// fakeConn records writes and satisfies divoom.Transport.
-type fakeConn struct{ bytes.Buffer }
+// pingCommandHex is the wire bytes for makeCommand(0x46, nil), i.e. the
+// "get view" query Device.Ping sends as its write/read link-up barrier.
+// server.device() now performs this roundtrip before handing a device to a
+// handler, so every golden byte assertion below expects it prepended.
+const pingCommandHex = "01030046490002"
+
+// pingResponseHex is a real hardware reply to pingCommandHex, captured from
+// a Pixoo Max over Bluetooth serial (see pkg/divoom/device_test.go).
+const pingResponseHex = "011b00044655000001ff5000640001026400ffffff000100000024150c0602"
+
+// fakeConn records writes and satisfies divoom.Transport. Read answers the
+// first read after a write with the canned ping response, so Device.Ping's
+// write/read barrier in server.device() succeeds against these tests.
+type fakeConn struct {
+	bytes.Buffer
+	responded bool
+}
 
 func (f *fakeConn) Close() error { return nil }
+
+func (f *fakeConn) Read(b []byte) (int, error) {
+	if f.responded || f.Buffer.Len() == 0 {
+		return 0, io.EOF
+	}
+	f.responded = true
+	resp, err := hex.DecodeString(pingResponseHex)
+	if err != nil {
+		panic(err) // fixture is a constant; a decode failure is a test bug
+	}
+	return copy(b, resp), nil
+}
 
 func newTestServer(t *testing.T) (*server, *fakeConn) {
 	t.Helper()
@@ -38,7 +66,7 @@ func TestBrightnessEndpoint(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	want, _ := hex.DecodeString("010400740a820002")
+	want, _ := hex.DecodeString(pingCommandHex + "010400740a820002")
 	if !bytes.Equal(fc.Bytes(), want) {
 		t.Errorf("wire bytes: got %x, want %x", fc.Bytes(), want)
 	}
@@ -170,7 +198,7 @@ func TestImageUpload(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	want, _ := hex.DecodeString("01310044000a0a04aa2a0000000001ff00000000000000000000000000000000000000000000000000000000000000000000610202")
+	want, _ := hex.DecodeString(pingCommandHex + "01310044000a0a04aa2a0000000001ff00000000000000000000000000000000000000000000000000000000000000000000610202")
 	if !bytes.Equal(fc.Bytes(), want) {
 		t.Errorf("wire bytes:\ngot  %x\nwant %x", fc.Bytes(), want)
 	}

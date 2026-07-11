@@ -58,7 +58,12 @@ func (s *server) device() (*divoom.Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.dev = divoom.NewDevice(t, divoom.PixooMax)
+	d := divoom.NewDevice(t, divoom.PixooMax)
+	if err := d.Ping(); err != nil {
+		t.Close()
+		return nil, err
+	}
+	s.dev = d
 	return s.dev, nil
 }
 

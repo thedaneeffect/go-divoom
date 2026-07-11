@@ -99,6 +99,9 @@ func withDevice(cfg Config, fn func(*divoom.Device) error) {
 	}
 	d := divoom.NewDevice(t, divoom.PixooMax)
 	defer d.Close()
+	if err := d.Ping(); err != nil {
+		fatal(err)
+	}
 	fatal(fn(d))
 }
 

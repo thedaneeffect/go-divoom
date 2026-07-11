@@ -27,6 +27,64 @@ func (d *Device) Close() error {
 	return d.t.Close()
 }
 
+// pingTimeout bounds how long Ping waits for a reply before giving up.
+const pingTimeout = 2 * time.Second
+
+// deadlineSetter is implemented by transports that support read deadlines
+// (e.g. *os.File). Ping uses it when available to bound the wait for a
+// reply instead of risking an indefinite block.
+type deadlineSetter interface {
+	SetReadDeadline(time.Time) error
+}
+
+// Ping sends a lightweight status query ("get view") and blocks until the
+// device replies or pingTimeout elapses.
+//
+// This exists because opening a macOS Bluetooth serial port
+// (/dev/cu.Pixoo-Max-*) succeeds, and writes to it report success, even when
+// the underlying RFCOMM link never actually came up: commands vanish
+// silently with no error anywhere in the stack. The device does reply to
+// commands, so a full write/read roundtrip is the only reliable way to
+// confirm the link is live and flush past whatever buffering hides the
+// failure. Callers should invoke Ping immediately after dialing, before
+// trusting the connection for anything else.
+func (d *Device) Ping() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if _, err := d.t.Write(makeCommand(0x46, nil)); err != nil {
+		return fmt.Errorf("divoom: write: %w", err)
+	}
+
+	if dl, ok := d.t.(deadlineSetter); ok {
+		if err := dl.SetReadDeadline(time.Now().Add(pingTimeout)); err != nil {
+			return fmt.Errorf("divoom: set read deadline: %w", err)
+		}
+		defer dl.SetReadDeadline(time.Time{})
+	}
+
+	var acc []byte
+	buf := make([]byte, 64)
+	for {
+		n, err := d.t.Read(buf)
+		if n > 0 {
+			acc = append(acc, buf[:n]...)
+			if isCompleteFrame(acc) {
+				return nil
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("divoom: no response from device (link not established?): %w", err)
+		}
+	}
+}
+
+// isCompleteFrame reports whether b holds at least one full wire frame:
+// terminated by 0x02 with a nonempty payload.
+func isCompleteFrame(b []byte) bool {
+	return len(b) >= 3 && b[len(b)-1] == 0x02
+}
+
 func (d *Device) send(msgs ...[]byte) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

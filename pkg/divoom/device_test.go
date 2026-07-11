@@ -2,8 +2,11 @@ package divoom
 
 import (
 	"bytes"
+	"encoding/hex"
 	"image"
 	"image/color"
+	"io"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,6 +14,68 @@ import (
 func newFakeDevice() (*Device, *fakeTransport) {
 	ft := &fakeTransport{}
 	return NewDevice(ft, PixooMax), ft
+}
+
+// pingResponseHex is a real "get view" reply captured from a Pixoo Max over
+// Bluetooth serial: 01 03 00 46 49 00 02 in, this out. Used to simulate a
+// live link answering Device.Ping.
+const pingResponseHex = "011b00044655000001ff5000640001026400ffffff000100000024150c0602"
+
+// pingTransport embeds fakeTransport (so writes are still recorded exactly
+// as fakeTransport users expect) but answers the first Read after a write
+// with the canned hardware response, modeling a link that is actually up.
+type pingTransport struct {
+	fakeTransport
+	responded bool
+}
+
+func (p *pingTransport) Read(b []byte) (int, error) {
+	if p.responded || p.fakeTransport.Len() == 0 {
+		return 0, io.EOF
+	}
+	p.responded = true
+	resp := mustHexBytes(pingResponseHex)
+	return copy(b, resp), nil
+}
+
+// silentTransport accepts writes like fakeTransport but never yields a
+// response, modeling the hardware defect: /dev/cu.* opens and Write reports
+// success even though the Bluetooth RFCOMM link never came up, so commands
+// vanish and no reply ever arrives.
+type silentTransport struct{ fakeTransport }
+
+func (s *silentTransport) Read([]byte) (int, error) { return 0, io.EOF }
+
+func mustHexBytes(s string) []byte {
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		panic(err) // fixture is a constant; a decode failure is a test bug
+	}
+	return b
+}
+
+func TestDevicePingSuccess(t *testing.T) {
+	pt := &pingTransport{}
+	d := NewDevice(pt, PixooMax)
+	if err := d.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	want := mustHex(t, "01030046490002")
+	if got := pt.Bytes(); !bytes.Equal(got, want) {
+		t.Errorf("got %x, want %x", got, want)
+	}
+}
+
+func TestDevicePingNoResponse(t *testing.T) {
+	st := &silentTransport{}
+	d := NewDevice(st, PixooMax)
+	err := d.Ping()
+	if err == nil {
+		t.Fatal("expected error when device never responds")
+	}
+	if !strings.Contains(err.Error(), "no response") {
+		t.Errorf("error = %q, want it to mention %q", err.Error(), "no response")
+	}
 }
 
 // Goldens from testdata/gen_goldens.py; brightness also hardware-validated.
