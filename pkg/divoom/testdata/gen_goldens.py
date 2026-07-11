@@ -96,6 +96,29 @@ ff2, _ = d32.make_frame([0x00, 0x00, 0x06, 0x00, 0x00, 0x00])
 out["flag_frame_1"] = hexs(ff1)
 out["flag_frame_2"] = hexs(ff2)
 
+# 9b. wide (32x32) animation: checkerboard + solid red, 250ms -> flag frames
+# prepended, wide counters (u32LE total + u16LE index), two 200-byte chunks
+pix_checker = [(x + y) % 2 for y in range(32) for x in range(32)]
+wf1 = d32.process_frame(pix_checker, [[0, 0, 0], [255, 255, 255]], 2, 2, 250, True)
+wf2 = d32.process_frame([0] * 1024, [[255, 0, 0]], 1, 2, 250, True)
+parts, total = [], 0
+for raw in ([0x00, 0x00, 0x05, 0x00, 0x00], [0x00, 0x00, 0x06, 0x00, 0x00, 0x00]):
+    b, l = d32.make_frame(raw)
+    parts += b
+    total += l
+for f in (wf1, wf2):
+    b, l = d32.make_frame(f)
+    parts += b
+    total += l
+msgs = []
+for i, ch in enumerate(d32.chunks(parts, d32.chunksize)):
+    fp = d32.make_framepart(total, i, ch)
+    cp = list((len(fp) + 3).to_bytes(2, "little")) + [0x49] + fp
+    msgs.append(hexs(d32.make_message(cp)))
+out["anim32_2frames_total"] = total
+out["anim32_2frames_nchunks"] = len(msgs)
+out["anim32_2frames_messages"] = msgs
+
 # 10. view/light/clock command payloads (args only, for command-builder tests)
 out["cmd_light_white_100_on"] = hexs(d32.make_message([len([0x01,0xFF,0xFF,0xFF,100,0x01,0x01,0x00,0x00,0x00])+3, 0x00, 0x45, 0x01,0xFF,0xFF,0xFF,100,0x01,0x01,0x00,0x00,0x00]))
 out["cmd_clock_style2_24h"] = hexs(d32.make_message([len([0x00,0x01,0x02,0x01,0x00,0x00,0x00])+3, 0x00, 0x45, 0x00,0x01,0x02,0x01,0x00,0x00,0x00]))
