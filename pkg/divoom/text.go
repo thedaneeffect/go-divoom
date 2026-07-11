@@ -28,9 +28,7 @@ func (d *Device) ShowText(text string, o TextOptions) error {
 		o.FrameTime = 50 * time.Millisecond
 	}
 	frames := renderTextFrames(text, d.p.ScreenSize, o.Color, o.Background)
-	imgs := make([]image.Image, len(frames))
-	copy(imgs, frames)
-	return d.SendAnimation(imgs, o.FrameTime)
+	return d.SendAnimation(frames, o.FrameTime)
 }
 
 // renderTextFrames renders text into scroll animation frames of size x size.
