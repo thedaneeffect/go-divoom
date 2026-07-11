@@ -27,8 +27,14 @@ func (d *Device) Close() error {
 	return d.t.Close()
 }
 
-// pingTimeout bounds how long Ping waits for a reply before giving up.
+// pingTimeout bounds how long each Ping attempt waits for a reply.
 const pingTimeout = 2 * time.Second
+
+// pingAttempts is how many write+read roundtrips Ping makes before giving
+// up. Hardware-observed: the first write after opening /dev/cu.* can be
+// swallowed while the RFCOMM channel is still establishing, so a single
+// roundtrip reports a dead link on a device that is merely slow to come up.
+const pingAttempts = 3
 
 // deadlineSetter is implemented by transports that support read deadlines
 // (e.g. *os.File). Ping uses it when available to bound the wait for a
@@ -38,7 +44,8 @@ type deadlineSetter interface {
 }
 
 // Ping sends a lightweight status query ("get view") and blocks until the
-// device replies or pingTimeout elapses.
+// device replies, retrying up to pingAttempts times with a fresh write and
+// a pingTimeout read deadline per attempt.
 //
 // This exists because opening a macOS Bluetooth serial port
 // (/dev/cu.Pixoo-Max-*) succeeds, and writes to it report success, even when
@@ -52,6 +59,18 @@ func (d *Device) Ping() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	var lastErr error
+	for i := 0; i < pingAttempts; i++ {
+		lastErr = d.pingOnce()
+		if lastErr == nil {
+			return nil
+		}
+	}
+	return lastErr
+}
+
+// pingOnce performs a single write+read roundtrip. Caller must hold d.mu.
+func (d *Device) pingOnce() error {
 	if _, err := d.t.Write(makeCommand(0x46, nil)); err != nil {
 		return fmt.Errorf("divoom: write: %w", err)
 	}

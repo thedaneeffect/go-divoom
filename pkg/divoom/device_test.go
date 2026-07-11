@@ -22,15 +22,26 @@ func newFakeDevice() (*Device, *fakeTransport) {
 const pingResponseHex = "011b00044655000001ff5000640001026400ffffff000100000024150c0602"
 
 // pingTransport embeds fakeTransport (so writes are still recorded exactly
-// as fakeTransport users expect) but answers the first Read after a write
-// with the canned hardware response, modeling a link that is actually up.
+// as fakeTransport users expect) but answers Read with the canned hardware
+// response once respondOnWrite writes have landed. respondOnWrite <= 1
+// models a link that is up immediately; > 1 models the cold-link behavior
+// seen on hardware, where writes issued while the RFCOMM channel is still
+// establishing are swallowed and only a later retry gets a reply.
 type pingTransport struct {
 	fakeTransport
-	responded bool
+	respondOnWrite int // respond once this many writes have occurred; 0 means 1
+	writes         int
+	responded      bool
+}
+
+func (p *pingTransport) Write(b []byte) (int, error) {
+	p.writes++
+	return p.fakeTransport.Write(b)
 }
 
 func (p *pingTransport) Read(b []byte) (int, error) {
-	if p.responded || p.fakeTransport.Len() == 0 {
+	threshold := max(p.respondOnWrite, 1)
+	if p.responded || p.writes < threshold {
 		return 0, io.EOF
 	}
 	p.responded = true
@@ -66,6 +77,22 @@ func TestDevicePingSuccess(t *testing.T) {
 	}
 }
 
+// Hardware-observed: the first write after opening /dev/cu.* is swallowed
+// while the RFCOMM channel is still establishing; a later write gets a
+// reply. Ping must retry rather than give up after one roundtrip.
+func TestDevicePingRetriesColdLink(t *testing.T) {
+	pt := &pingTransport{respondOnWrite: 2}
+	d := NewDevice(pt, PixooMax)
+	if err := d.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	ping := mustHex(t, "01030046490002")
+	want := append(append([]byte{}, ping...), ping...) // two attempts written
+	if got := pt.Bytes(); !bytes.Equal(got, want) {
+		t.Errorf("got %x, want %x", got, want)
+	}
+}
+
 func TestDevicePingNoResponse(t *testing.T) {
 	st := &silentTransport{}
 	d := NewDevice(st, PixooMax)
@@ -75,6 +102,11 @@ func TestDevicePingNoResponse(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no response") {
 		t.Errorf("error = %q, want it to mention %q", err.Error(), "no response")
+	}
+	ping := mustHex(t, "01030046490002")
+	want := bytes.Repeat(ping, 3) // all three attempts written before giving up
+	if got := st.Bytes(); !bytes.Equal(got, want) {
+		t.Errorf("got %x, want %x (3 ping attempts)", got, want)
 	}
 }
 
