@@ -71,7 +71,11 @@ func main() {
 	case "clock":
 		style := 0
 		if len(args) > 0 {
-			style, _ = strconv.Atoi(args[0])
+			v, err := strconv.Atoi(args[0])
+			if err != nil {
+				fatal(fmt.Errorf("clock style must be a number: %w", err))
+			}
+			style = v
 		}
 		withDevice(cfg, func(d *divoom.Device) error {
 			return d.ShowClock(divoom.ClockOptions{Style: style, TwentyFour: true})
@@ -84,7 +88,11 @@ func main() {
 		}
 		brightness := 100
 		if len(args) > 1 {
-			brightness, _ = strconv.Atoi(args[1])
+			v, err := strconv.Atoi(args[1])
+			if err != nil {
+				fatal(fmt.Errorf("light brightness must be a number: %w", err))
+			}
+			brightness = v
 		}
 		withDevice(cfg, func(d *divoom.Device) error { return d.ShowLight(rgb, brightness, true) })
 	default:
@@ -137,10 +145,7 @@ func sendFile(d *divoom.Device, path string) error {
 			return fmt.Errorf("decode gif: %w", err)
 		}
 		if len(g.Image) > 1 {
-			frames := make([]image.Image, len(g.Image))
-			for i, im := range g.Image {
-				frames[i] = im
-			}
+			frames := gifFrames(g)
 			delay := 100 * time.Millisecond
 			if len(g.Delay) > 0 && g.Delay[0] > 0 {
 				delay = time.Duration(g.Delay[0]) * 10 * time.Millisecond

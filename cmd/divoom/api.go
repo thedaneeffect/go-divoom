@@ -249,10 +249,7 @@ func (s *server) handleImage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(g.Image) > 1 {
-			frames := make([]image.Image, len(g.Image))
-			for i, im := range g.Image {
-				frames[i] = im
-			}
+			frames := gifFrames(g)
 			delay := 100 * time.Millisecond
 			if len(g.Delay) > 0 && g.Delay[0] > 0 {
 				delay = time.Duration(g.Delay[0]) * 10 * time.Millisecond
