@@ -3,11 +3,11 @@ package divoom
 import (
 	"encoding/binary"
 	"fmt"
+	xdraw "golang.org/x/image/draw"
 	"image"
 	"image/color"
 	"math/bits"
 	"time"
-	xdraw "golang.org/x/image/draw"
 )
 
 // paletteImage converts a square 16x16 or 32x32 image into a first-seen-order

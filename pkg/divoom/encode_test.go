@@ -185,6 +185,38 @@ func TestAnimationMessages(t *testing.T) {
 	}
 }
 
+func fill32(c color.RGBA) image.Image {
+	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			img.Set(x, y, c)
+		}
+	}
+	return img
+}
+
+// Golden from testdata/gen_goldens.py (hass-divoom reference): 2-frame 32x32
+// animation (checkerboard + solid red, 250ms) -> flag frames prepended,
+// u32LE total 298, two 200-byte chunks.
+func TestAnimationMessages32Wide(t *testing.T) {
+	frames := []image.Image{checker32(), fill32(color.RGBA{255, 0, 0, 255})}
+	msgs, err := PixooMax.animationMessages(frames, 250*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("got %d messages, want 2", len(msgs))
+	}
+	want0 := mustHex(t, "01d100492a0100000000aa08000000050000aa0900000006000000aa8e00fa00030200000000ffffffaaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aa8b00fa00030100ff0000000000000000000000000000000000000000000000000000000000000000db4a02")
+	want1 := mustHex(t, "016b00492a01000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e00002")
+	if !bytes.Equal(msgs[0], want0) {
+		t.Errorf("chunk 0:\ngot  %x\nwant %x", msgs[0], want0)
+	}
+	if !bytes.Equal(msgs[1], want1) {
+		t.Errorf("chunk 1:\ngot  %x\nwant %x", msgs[1], want1)
+	}
+}
+
 func TestFitImageResizes(t *testing.T) {
 	big := image.NewRGBA(image.Rect(0, 0, 300, 200))
 	got := PixooMax.fitImage(big)
