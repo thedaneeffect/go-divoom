@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -89,6 +90,32 @@ func (c *bthConn) Write(p []byte) (int, error) {
 		return 0, fmt.Errorf("divoom: bth write %s: %w", c.mac, err)
 	}
 	return int(n), nil
+}
+
+// SetReadDeadline bounds how long Read blocks waiting for data. Winsock has
+// no per-call deadline primitive equivalent to os.File.SetReadDeadline, so
+// this approximates it with SO_RCVTIMEO, a socket-level receive timeout:
+// WSARecv aborts with WSAETIMEDOUT once that many milliseconds elapse with
+// no data (surfaced by Read's existing error wrap). That is coarser than a
+// true absolute deadline, but sufficient for Device.Ping, the only caller,
+// which sets the deadline immediately before a single read and clears it
+// (via the zero time) immediately after.
+func (c *bthConn) SetReadDeadline(t time.Time) error {
+	var ms int
+	if !t.IsZero() {
+		if d := time.Until(t); d > 0 {
+			ms = int(d.Milliseconds())
+			if ms == 0 {
+				ms = 1 // round sub-millisecond deadlines up so 0 always means "no timeout"
+			}
+		} else {
+			ms = 1 // already expired: timeout immediately rather than blocking forever
+		}
+	}
+	if err := windows.SetsockoptInt(c.fd, windows.SOL_SOCKET, windows.SO_RCVTIMEO, ms); err != nil {
+		return fmt.Errorf("divoom: bth set read deadline %s: %w", c.mac, err)
+	}
+	return nil
 }
 
 func (c *bthConn) Close() error {
