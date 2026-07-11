@@ -51,8 +51,8 @@ go-divoom/
 │   ├── transport_serial.go  # serial port (/dev/cu.* on macOS) — primary dev transport
 │   ├── transport_linux.go # RFCOMM via x/sys/unix
 │   ├── transport_windows.go # RFCOMM via x/sys/windows
-│   └── device.go          # Device interface: capabilities, screen size
-├── pkg/divoom/pixoomax/   # Pixoo Max backend (screensize 32, chunksize 200, capability set)
+│   ├── device.go          # Device API over a Transport
+│   └── profile.go         # device Profiles (PixooMax: screen 32, chunk 200, wide counters)
 ├── cmd/divoom/            # single binary
 │   ├── main.go            # HTTP server + embedded UI; flag-driven one-shot CLI mode
 │   └── api.go             # REST: /api/device/* ; device MAC/proxy config persisted
