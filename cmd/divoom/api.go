@@ -277,10 +277,3 @@ func jsonError(w http.ResponseWriter, code int, err error) {
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
-
-// uiHandler serves the embedded web UI; Task 11 replaces this stub with go:embed.
-func uiHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "UI not built; run: mise run build", http.StatusNotFound)
-	})
-}

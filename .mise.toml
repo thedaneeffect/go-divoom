@@ -9,7 +9,11 @@ run = "go test ./..."
 run = ["go vet ./...", "go test ./..."]
 
 [tasks.build]
-run = ["cd web && bun install && bun run build", "go build -o bin/divoom ./cmd/divoom"]
+run = [
+  "cd web && bun install && bun run build",
+  "rm -rf cmd/divoom/webdist && cp -r web/dist cmd/divoom/webdist",
+  "go build -o bin/divoom ./cmd/divoom",
+]
 
 [tasks.dev]
 run = "go run ./cmd/divoom serve"
