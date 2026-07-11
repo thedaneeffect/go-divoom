@@ -92,10 +92,6 @@ func main() {
 	}
 }
 
-func serve(cfg Config) error {
-	return fmt.Errorf("serve: not implemented yet")
-}
-
 func withDevice(cfg Config, fn func(*divoom.Device) error) {
 	t, err := dial(cfg)
 	if err != nil {
