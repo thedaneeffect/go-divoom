@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"testing"
+	"time"
 )
 
 // Goldens from testdata/gen_goldens.py (hass-divoom reference).
@@ -88,5 +89,111 @@ func TestPaletteImageRejectsBadSize(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 20, 20))
 	if _, _, err := paletteImage(img); err == nil {
 		t.Error("expected error for 20x20 image")
+	}
+}
+
+func fill16(c color.RGBA) image.Image {
+	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.Set(x, y, c)
+		}
+	}
+	return img
+}
+
+func checker32() image.Image {
+	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			if (x+y)%2 == 0 {
+				img.Set(x, y, color.RGBA{0, 0, 0, 255})
+			} else {
+				img.Set(x, y, color.RGBA{255, 255, 255, 255})
+			}
+		}
+	}
+	return img
+}
+
+// Goldens from testdata/gen_goldens.py.
+func TestFrameData16Red(t *testing.T) {
+	palette, pixels, err := paletteImage(fill16(color.RGBA{255, 0, 0, 255}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := frameData(0, false, false, palette, pixels)
+	want := mustHex(t, "00000001ff00000000000000000000000000000000000000000000000000000000000000000000")
+	if !bytes.Equal(got, want) {
+		t.Errorf("got  %x\nwant %x", got, want)
+	}
+}
+
+func TestFrameData32Checker(t *testing.T) {
+	palette, pixels, err := paletteImage(checker32())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := frameData(0, false, true, palette, pixels)
+	want := mustHex(t, "0000030200000000ffffffaaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555")
+	if !bytes.Equal(got, want) {
+		t.Errorf("got  %x\nwant %x", got, want)
+	}
+}
+
+func TestMakeFrame(t *testing.T) {
+	palette, pixels, _ := paletteImage(fill16(color.RGBA{255, 0, 0, 255}))
+	frame, length := makeFrame(frameData(0, false, false, palette, pixels))
+	if length != 42 {
+		t.Errorf("length field = %d, want 42", length)
+	}
+	want := mustHex(t, "aa2a0000000001ff00000000000000000000000000000000000000000000000000000000000000000000")
+	if !bytes.Equal(frame, want) {
+		t.Errorf("got  %x\nwant %x", frame, want)
+	}
+}
+
+func TestImageMessages16Red(t *testing.T) {
+	msgs, err := PixooMax.imageMessages(fill16(color.RGBA{255, 0, 0, 255}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+	want := mustHex(t, "01310044000a0a04aa2a0000000001ff00000000000000000000000000000000000000000000000000000000000000000000610202")
+	if !bytes.Equal(msgs[0], want) {
+		t.Errorf("got  %x\nwant %x", msgs[0], want)
+	}
+}
+
+func TestAnimationMessages(t *testing.T) {
+	frames := []image.Image{
+		fill16(color.RGBA{255, 0, 0, 255}),
+		fill16(color.RGBA{0, 0, 0, 255}),
+	}
+	msgs, err := PixooMax.animationMessages(frames, 500*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+	want := mustHex(t, "015d0049540000000000aa2a00f4010001ff00000000000000000000000000000000000000000000000000000000000000000000aa2a00f401000100000000000000000000000000000000000000000000000000000000000000000000008d0502")
+	if !bytes.Equal(msgs[0], want) {
+		t.Errorf("got  %x\nwant %x", msgs[0], want)
+	}
+}
+
+func TestFitImageResizes(t *testing.T) {
+	big := image.NewRGBA(image.Rect(0, 0, 300, 200))
+	got := PixooMax.fitImage(big)
+	if b := got.Bounds(); b.Dx() != 32 || b.Dy() != 32 {
+		t.Errorf("resized to %dx%d, want 32x32", b.Dx(), b.Dy())
+	}
+	small := image.NewRGBA(image.Rect(0, 0, 10, 10))
+	got = PixooMax.fitImage(small)
+	if b := got.Bounds(); b.Dx() != 16 {
+		t.Errorf("small image resized to %d, want 16", b.Dx())
 	}
 }
