@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/thedaneeffect/go-divoom/pkg/divoom"
@@ -81,6 +82,68 @@ func TestStatusEndpoint(t *testing.T) {
 	if got.Connected || got.Profile != "Pixoo Max" {
 		t.Errorf("got %+v", got)
 	}
+}
+
+func TestLightBrightnessValidation(t *testing.T) {
+	srv, fc := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/light", bytes.NewBufferString(`{"color":"#ffffff","brightness":200}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	if fc.Len() != 0 {
+		t.Errorf("transport received %d bytes, want 0", fc.Len())
+	}
+}
+
+func TestLightExplicitZeroBrightness(t *testing.T) {
+	srv, _ := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/light", bytes.NewBufferString(`{"color":"#ffffff","brightness":0}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("status %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestClockStyleValidation(t *testing.T) {
+	srv, fc := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/clock", bytes.NewBufferString(`{"style":99}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	if fc.Len() != 0 {
+		t.Errorf("transport received %d bytes, want 0", fc.Len())
+	}
+}
+
+func TestConcurrentRequests(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	srv := newServer(defaultConfig(), func(Config) (divoom.Transport, error) {
+		return &fakeConn{}, nil
+	})
+	cfgJSON, err := json.Marshal(defaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			var req *http.Request
+			if i%2 == 0 {
+				req = httptest.NewRequest("POST", "/api/brightness", bytes.NewBufferString(`{"value":50}`))
+			} else {
+				req = httptest.NewRequest("PUT", "/api/config", bytes.NewReader(cfgJSON))
+			}
+			srv.ServeHTTP(httptest.NewRecorder(), req)
+		}(i)
+	}
+	wg.Wait()
 }
 
 func TestImageUpload(t *testing.T) {

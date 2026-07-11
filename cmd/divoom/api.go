@@ -63,10 +63,12 @@ func (s *server) device() (*divoom.Device, error) {
 }
 
 // dropDevice closes and forgets the connection so the next call redials.
-func (s *server) dropDevice() {
+// It only clears s.dev if it still holds d, so a stale request's error path
+// cannot tear down a newer connection dialed by a concurrent request.
+func (s *server) dropDevice(d *divoom.Device) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.dev != nil {
+	if d != nil && s.dev == d {
 		s.dev.Close()
 		s.dev = nil
 	}
@@ -80,7 +82,7 @@ func (s *server) withDevice(w http.ResponseWriter, fn func(*divoom.Device) error
 		return
 	}
 	if err := fn(d); err != nil {
-		s.dropDevice()
+		s.dropDevice(d)
 		jsonError(w, http.StatusBadGateway, err)
 		return
 	}
@@ -92,6 +94,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	connected := s.dev != nil
 	transport := s.cfg.Transport
 	s.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"connected": connected,
 		"profile":   divoom.PixooMax.Name,
@@ -103,6 +106,7 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	cfg := s.cfg
 	s.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(cfg)
 }
 
@@ -116,8 +120,13 @@ func (s *server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.dropDevice()
+	// Drop the connection and swap the config in one critical section so a
+	// concurrent request cannot redial with the stale config in between.
 	s.mu.Lock()
+	if s.dev != nil {
+		s.dev.Close()
+		s.dev = nil
+	}
 	s.cfg = cfg
 	s.mu.Unlock()
 	jsonOK(w)
@@ -157,7 +166,7 @@ func (s *server) handleScreen(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleLight(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Color      string `json:"color"`
-		Brightness int    `json:"brightness"`
+		Brightness *int   `json:"brightness"` // pointer: explicit 0 is legal, omitted defaults to 100
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, err)
@@ -168,10 +177,15 @@ func (s *server) handleLight(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, err)
 		return
 	}
-	if req.Brightness == 0 {
-		req.Brightness = 100
+	brightness := 100
+	if req.Brightness != nil {
+		brightness = *req.Brightness
 	}
-	s.withDevice(w, func(d *divoom.Device) error { return d.ShowLight(rgb, req.Brightness, true) })
+	if brightness < 0 || brightness > 100 {
+		jsonError(w, http.StatusBadRequest, fmt.Errorf("brightness %d out of range 0-100", brightness))
+		return
+	}
+	s.withDevice(w, func(d *divoom.Device) error { return d.ShowLight(rgb, brightness, true) })
 }
 
 func (s *server) handleClock(w http.ResponseWriter, r *http.Request) {
@@ -184,6 +198,10 @@ func (s *server) handleClock(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Style < 0 || req.Style > 15 {
+		jsonError(w, http.StatusBadRequest, fmt.Errorf("style %d out of range 0-15", req.Style))
 		return
 	}
 	s.withDevice(w, func(d *divoom.Device) error {
