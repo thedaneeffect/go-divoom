@@ -10,10 +10,13 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// wsaStartup lazily initializes Winsock for the process. The standard
-// library's net package does this itself via internal/poll, but we bypass
-// net entirely here, so DialRFCOMM must call it before any other Winsock
-// function or socket creation fails with WSANOTINITIALISED.
+// wsaStartup lazily initializes Winsock for the process. Today this is
+// technically redundant: mac.go imports net (for net.ParseMAC), and on
+// Windows the net package's init already runs WSAStartup before DialRFCOMM
+// can be called. That is an incidental transitive import, though — if
+// parseMAC ever stopped using net, Winsock init would silently vanish. The
+// explicit call makes this file self-sufficient; WSAStartup is refcounted
+// and idempotent, so the extra call is harmless.
 var wsaStartup = sync.OnceValue(func() error {
 	var data windows.WSAData
 	// 0x0202 requests Winsock 2.2, matching the version the Go runtime
@@ -62,7 +65,8 @@ func (c *bthConn) Read(p []byte) (int, error) {
 	var flags uint32
 	err := windows.WSARecv(c.fd, &buf, 1, &n, &flags, nil, nil)
 	if err != nil {
-		return int(n), fmt.Errorf("divoom: bth read %s: %w", c.mac, err)
+		// Win32 leaves the transfer count unspecified on failure.
+		return 0, fmt.Errorf("divoom: bth read %s: %w", c.mac, err)
 	}
 	if n == 0 {
 		// A zero-byte, nil-error result signals a graceful peer close, same
@@ -81,7 +85,8 @@ func (c *bthConn) Write(p []byte) (int, error) {
 	buf := windows.WSABuf{Len: uint32(len(p)), Buf: &p[0]}
 	err := windows.WSASend(c.fd, &buf, 1, &n, 0, nil, nil)
 	if err != nil {
-		return int(n), fmt.Errorf("divoom: bth write %s: %w", c.mac, err)
+		// Win32 leaves the transfer count unspecified on failure.
+		return 0, fmt.Errorf("divoom: bth write %s: %w", c.mac, err)
 	}
 	return int(n), nil
 }
