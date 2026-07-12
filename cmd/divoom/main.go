@@ -17,6 +17,13 @@ import (
 )
 
 func main() {
+	// On macOS the IOBluetooth transport needs the main thread servicing
+	// the event loop, so all real work runs on a second goroutine.
+	// Elsewhere RunEventLoop is a plain call.
+	divoom.RunEventLoop(run)
+}
+
+func run() {
 	serialFlag := flag.String("serial", "", "serial port path (overrides config)")
 	macFlag := flag.String("mac", "", "Bluetooth MAC for RFCOMM (overrides config)")
 	flag.Parse()
