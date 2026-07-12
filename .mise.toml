@@ -5,8 +5,11 @@ bun = "latest"
 [tasks.test]
 run = "go test ./..."
 
+[tasks.test-web]
+run = "cd web && bun install && bun run test"
+
 [tasks.check]
-run = ["go vet ./...", "go test ./..."]
+run = ["go vet ./...", "go test ./...", "mise run test-web"]
 
 [tasks.build]
 # webdist is generated, but .gitkeep inside it is tracked (go:embed needs the
