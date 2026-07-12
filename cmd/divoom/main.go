@@ -57,6 +57,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.Usage = func() { printUsage(stderr) }
 	serialFlag := fs.String("serial", "", serialFlagUsage)
 	macFlag := fs.String("mac", "", macFlagUsage)
+	directFlag := fs.Bool("direct", false, directFlagUsage)
 	if err := fs.Parse(args); err != nil {
 		// fs.Usage already printed the manual to stderr (flag calls it for
 		// both -h/--help and genuine parse errors).
@@ -99,8 +100,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if *macFlag != "" {
 		cfg.Transport, cfg.MAC = "rfcomm", *macFlag
 	}
+	flags := cliFlags{direct: *directFlag}
 
-	if err := cmd.run(cfg, cmdArgs, stdout, stderr); err != nil {
+	if err := cmd.run(cfg, flags, cmdArgs, stdout, stderr); err != nil {
 		fmt.Fprintln(stderr, "divoom:", err)
 		return 1
 	}
@@ -121,23 +123,35 @@ func helpFor(name string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdSend(cfg Config, args []string, stdout, stderr io.Writer) error {
+// cliFlags holds global command-line flags that affect how a command talks
+// to the device, as opposed to cfg (the persisted device configuration).
+type cliFlags struct {
+	direct bool // -direct: skip the daemon probe and always dial directly
+}
+
+func cmdSend(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: divoom send <image file>")
 	}
-	return withDevice(cfg, func(d *divoom.Device) error { return sendFile(d, args[0]) })
+	path := args[0]
+	return routeCommand(cfg, flags,
+		func(baseURL string) error { return daemonSendImage(baseURL, path) },
+		func(d *divoom.Device) error { return sendFile(d, path) },
+	)
 }
 
-func cmdText(cfg Config, args []string, stdout, stderr io.Writer) error {
+func cmdText(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: divoom text <message>")
 	}
-	return withDevice(cfg, func(d *divoom.Device) error {
-		return d.ShowText(strings.Join(args, " "), divoom.TextOptions{})
-	})
+	text := strings.Join(args, " ")
+	return routeCommand(cfg, flags,
+		func(baseURL string) error { return daemonText(baseURL, text) },
+		func(d *divoom.Device) error { return d.ShowText(text, divoom.TextOptions{}) },
+	)
 }
 
-func cmdBrightness(cfg Config, args []string, stdout, stderr io.Writer) error {
+func cmdBrightness(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: divoom brightness <0-100>")
 	}
@@ -145,18 +159,27 @@ func cmdBrightness(cfg Config, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("brightness must be a number: %w", err)
 	}
-	return withDevice(cfg, func(d *divoom.Device) error { return d.SetBrightness(v) })
+	return routeCommand(cfg, flags,
+		func(baseURL string) error { return daemonBrightness(baseURL, v) },
+		func(d *divoom.Device) error { return d.SetBrightness(v) },
+	)
 }
 
-func cmdOn(cfg Config, args []string, stdout, stderr io.Writer) error {
-	return withDevice(cfg, (*divoom.Device).ScreenOn)
+func cmdOn(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
+	return routeCommand(cfg, flags,
+		func(baseURL string) error { return daemonScreen(baseURL, true) },
+		(*divoom.Device).ScreenOn,
+	)
 }
 
-func cmdOff(cfg Config, args []string, stdout, stderr io.Writer) error {
-	return withDevice(cfg, (*divoom.Device).ScreenOff)
+func cmdOff(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
+	return routeCommand(cfg, flags,
+		func(baseURL string) error { return daemonScreen(baseURL, false) },
+		(*divoom.Device).ScreenOff,
+	)
 }
 
-func cmdClock(cfg Config, args []string, stdout, stderr io.Writer) error {
+func cmdClock(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
 	style := 0
 	if len(args) > 0 {
 		v, err := strconv.Atoi(args[0])
@@ -165,12 +188,15 @@ func cmdClock(cfg Config, args []string, stdout, stderr io.Writer) error {
 		}
 		style = v
 	}
-	return withDevice(cfg, func(d *divoom.Device) error {
-		return d.ShowClock(divoom.ClockOptions{Style: style, TwentyFour: true})
-	})
+	return routeCommand(cfg, flags,
+		func(baseURL string) error { return daemonClock(baseURL, style, true) },
+		func(d *divoom.Device) error {
+			return d.ShowClock(divoom.ClockOptions{Style: style, TwentyFour: true})
+		},
+	)
 }
 
-func cmdLight(cfg Config, args []string, stdout, stderr io.Writer) error {
+func cmdLight(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: divoom light <#RRGGBB> [brightness]")
 	}
@@ -186,7 +212,31 @@ func cmdLight(cfg Config, args []string, stdout, stderr io.Writer) error {
 		}
 		brightness = v
 	}
-	return withDevice(cfg, func(d *divoom.Device) error { return d.ShowLight(rgb, brightness, true) })
+	return routeCommand(cfg, flags,
+		func(baseURL string) error { return daemonLight(baseURL, rgb, brightness) },
+		func(d *divoom.Device) error { return d.ShowLight(rgb, brightness, true) },
+	)
+}
+
+// routeCommand is the shared dispatch path for every one-shot device
+// command that has a daemon-routed equivalent. When `divoom serve` is
+// already running, it holds a persistent, already-pinged connection to the
+// device — routing through its HTTP API (viaDaemon) skips the dial/ping
+// cost of a fresh connection and completes near-instantly. When the daemon
+// isn't reachable, or -direct was passed, this falls back to precisely the
+// pre-daemon direct-dial path (withDevice/runDevice below), including the
+// Ping-on-dial and Flush-before-close hardware barriers.
+//
+// The two paths are mutually exclusive for a single invocation: if the
+// probe says the daemon is up but viaDaemon itself then fails, that error
+// is returned as-is rather than retried via a direct dial, since the
+// daemon already holds the device's only connection and a concurrent
+// direct dial would contend with it.
+func routeCommand(cfg Config, flags cliFlags, viaDaemon func(baseURL string) error, direct func(*divoom.Device) error) error {
+	if !flags.direct && probeDaemon(cfg) {
+		return viaDaemon(daemonBaseURL(cfg.ListenAddr))
+	}
+	return withDevice(cfg, direct)
 }
 
 // withDevice dials the device, runs fn, and flushes before closing.
@@ -204,8 +254,14 @@ func cmdLight(cfg Config, args []string, stdout, stderr io.Writer) error {
 // wedging the adapter for other connections. So the work runs in
 // runDevice, which returns an error instead of exiting, and Close always
 // runs before this function returns anything to its caller.
+// dialFunc is the seam withDevice uses to obtain a transport. It defaults
+// to dial (the real Bluetooth/serial dialer); tests substitute a fake so
+// the direct-dial fallback path can be exercised without touching
+// hardware.
+var dialFunc = dial
+
 func withDevice(cfg Config, fn func(*divoom.Device) error) error {
-	t, err := dial(cfg)
+	t, err := dialFunc(cfg)
 	if err != nil {
 		return err
 	}

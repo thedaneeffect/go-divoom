@@ -11,7 +11,7 @@ import (
 // device and running commands against it. It detects whether target looks
 // like a serial path or a Bluetooth MAC and persists the corresponding
 // transport to the config file.
-func cmdUse(cfg Config, args []string, stdout, stderr io.Writer) error {
+func cmdUse(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: divoom use <mac|serial-path>")
 	}

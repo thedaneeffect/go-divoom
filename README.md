@@ -1,6 +1,6 @@
 # go-divoom
 
-Go library, server, and web panel for controlling Divoom pixel displays over Bluetooth Classic. Primary target: **Divoom Pixoo Max** (32×32). Single binary: REST API + embedded Svelte control panel + one-shot CLI.
+Go library, headless daemon, and CLI for controlling Divoom pixel displays over Bluetooth Classic. Primary target: **Divoom Pixoo Max** (32×32). Single binary: one-shot CLI + JSON REST API daemon.
 
 Reimplementation of the reverse-engineered Divoom binary protocol, validated byte-for-byte against [hass-divoom](https://github.com/d03n3rfr1tz3/hass-divoom) and real hardware. Inspired by [Pixoo64-Advanced-Tools](https://github.com/tidyhf/Pixoo64-Advanced-Tools) and [divoom-pixoo-max-nodejs](https://github.com/jakobwesthoff/divoom-pixoo-max-nodejs).
 
@@ -8,16 +8,16 @@ Reimplementation of the reverse-engineered Divoom binary protocol, validated byt
 
 - Static images (PNG/JPEG/GIF) and animated GIFs, auto-resized to 16×16 or 32×32
 - Scrolling text, brightness, solid-color light, clock faces, screen on/off, time sync
-- Web panel (embedded, no separate deploy) and JSON REST API
+- Headless daemon (`divoom serve`) exposing a JSON REST API over a single persistent Bluetooth connection; one-shot CLI commands route through it automatically when it's running, so they complete instantly instead of paying a fresh dial/ping cost
 - Transports: native RFCOMM everywhere — IOBluetooth on macOS (cgo), RFCOMM sockets on Linux and Windows (pure Go) — plus macOS Bluetooth serial (`/dev/cu.*`) as a fallback
 
 ## Build
 
-Requires [mise](https://mise.jdx.dev) (Go 1.24 + bun are pinned in `.mise.toml`):
+Requires [mise](https://mise.jdx.dev) (Go 1.24 is pinned in `.mise.toml`):
 
 ```bash
 mise install
-mise run build     # web build → embed → bin/divoom
+mise run build     # go build -o bin/divoom ./cmd/divoom
 mise run test      # go test ./...
 ```
 
@@ -31,13 +31,14 @@ Find the device MAC with `blueutil --inquiry` (macOS) or `bluetoothctl scan on` 
 
 ## Usage
 
-Server + web panel (recommended, especially on macOS — see quirks):
+Daemon (recommended, especially on macOS — see quirks): holds one persistent connection, and every one-shot command below routes through it automatically once it's running, making them near-instant.
 
 ```bash
-./bin/divoom serve            # http://localhost:8377
+./bin/divoom serve &           # JSON API on :8377
+./bin/divoom brightness 40     # routed through the daemon: instant
 ```
 
-One-shot CLI:
+One-shot CLI (dials directly when no daemon is running; pass `-direct` to force a direct dial even when one is):
 
 ```bash
 ./bin/divoom -mac AA:BB:CC:DD:EE:FF brightness 40
@@ -50,7 +51,9 @@ One-shot CLI:
 # macOS serial fallback: replace -mac ... with -serial /dev/cu.Pixoo-Max
 ```
 
-Settings persist to `~/.config/go-divoom/config.json` (server) and are editable in the web panel.
+Without a daemon running, leave a few seconds between separate one-shot invocations — the device needs time to settle before it accepts another connection.
+
+Settings persist to `~/.config/go-divoom/config.json`, editable via `divoom use <mac>` or the JSON API's `PUT /api/config`.
 
 ## Library
 

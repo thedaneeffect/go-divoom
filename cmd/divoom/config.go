@@ -59,7 +59,7 @@ func loadConfig() (Config, error) {
 // cmdConfig prints the config file's path, then its contents if it exists.
 // If no config has been saved yet, it points the user at `divoom use`
 // rather than printing nothing, which used to look like a silent failure.
-func cmdConfig(cfg Config, args []string, stdout, stderr io.Writer) error {
+func cmdConfig(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
 	path, err := configPath()
 	if err != nil {
 		return err

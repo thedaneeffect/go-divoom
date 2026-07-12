@@ -16,7 +16,7 @@ type command struct {
 	short    string   // one-line description, shown in the COMMANDS table
 	long     string   // paragraph shown by per-command help
 	examples []string // full command lines, shown as-is under EXAMPLES
-	run      func(cfg Config, args []string, stdout, stderr io.Writer) error
+	run      func(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error
 }
 
 // commands is every divoom subcommand except "help" itself, which is
@@ -24,8 +24,8 @@ type command struct {
 var commands = []command{
 	{
 		name:  "serve",
-		short: "run the HTTP control panel and API server",
-		long:  "Starts an HTTP server exposing a JSON API and, if built with the web panel, a browser UI for controlling the device. Runs until interrupted.",
+		short: "run as a headless daemon exposing the JSON API",
+		long:  "Starts a headless daemon exposing a JSON API and keeping a single persistent Bluetooth connection open. One-shot commands (send, text, brightness, on, off, clock, light) automatically detect and route through this daemon when it's running, which makes them near-instant instead of paying a fresh dial/ping/settle cost. There is no browser UI. Runs until interrupted.",
 		examples: []string{
 			"divoom serve",
 		},
@@ -184,6 +184,7 @@ func commandRows() []helpRow {
 const (
 	serialFlagUsage = "serial port path (overrides config), e.g. /dev/cu.Pixoo-Max"
 	macFlagUsage    = "Bluetooth MAC for RFCOMM (overrides config)"
+	directFlagUsage = "skip the daemon probe and always dial the device directly"
 )
 
 // printUsage prints the full manual: synopsis, usage, commands, global
@@ -211,26 +212,34 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "        "+serialFlagUsage)
 	fmt.Fprintln(w, "  -mac <address>")
 	fmt.Fprintln(w, "        "+macFlagUsage)
+	fmt.Fprintln(w, "  -direct")
+	fmt.Fprintln(w, "        "+directFlagUsage)
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "GETTING STARTED")
 	fmt.Fprintln(w, "  1. Pair the Pixoo with your OS's Bluetooth settings.")
 	fmt.Fprintln(w, "  2. Run `divoom devices` to find its MAC (or read it from your")
 	fmt.Fprintln(w, "     Bluetooth settings).")
 	fmt.Fprintln(w, "  3. Run `divoom use <mac>` to save it to the config.")
-	fmt.Fprintln(w, "  4. Run `divoom serve` for the web panel (at the configured listen")
-	fmt.Fprintln(w, "     address), or a one-shot command like `divoom text \"hello\"`.")
+	fmt.Fprintln(w, "  4. Run `divoom serve` to start the daemon (recommended - every")
+	fmt.Fprintln(w, "     one-shot command below then routes through it and is near-")
+	fmt.Fprintln(w, "     instant), or just run a command directly, e.g.")
+	fmt.Fprintln(w, "     `divoom text \"hello\"`.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "EXAMPLES")
 	fmt.Fprintln(w, "  divoom use AA:BB:CC:DD:EE:FF")
+	fmt.Fprintln(w, "  divoom serve &")
 	fmt.Fprintln(w, "  divoom send animation.gif")
 	fmt.Fprintln(w, "  divoom text \"hello world\"")
 	fmt.Fprintln(w, "  divoom brightness 60")
 	fmt.Fprintln(w, "  divoom light '#ff8800' 50")
-	fmt.Fprintln(w, "  divoom serve")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "NOTES")
-	fmt.Fprintln(w, "  Leave a few seconds between separate one-shot invocations - the")
-	fmt.Fprintln(w, "  device needs time to settle before it accepts another connection.")
+	fmt.Fprintln(w, "  Commands automatically route through `divoom serve` when it's")
+	fmt.Fprintln(w, "  running (fast: no dial, no settle wait) and dial the device")
+	fmt.Fprintln(w, "  directly otherwise (slower - leave a few seconds between separate")
+	fmt.Fprintln(w, "  invocations so the device has time to settle before the next")
+	fmt.Fprintln(w, "  connection). Pass -direct to always dial directly, skipping the")
+	fmt.Fprintln(w, "  daemon even if one is running.")
 	fmt.Fprintln(w, "  If Bluetooth wedges, macOS: blueutil --disconnect <mac>.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Run 'divoom help <command>' for details on one command.")

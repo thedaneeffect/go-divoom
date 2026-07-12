@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -38,32 +37,30 @@ func newServer(cfg Config, dialer func(Config) (divoom.Transport, error)) *serve
 	s.mux.HandleFunc("POST /api/clock", s.handleClock)
 	s.mux.HandleFunc("POST /api/text", s.handleText)
 	s.mux.HandleFunc("POST /api/image", s.handleImage)
-	s.mux.Handle("/", uiHandler())
 	return s
 }
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
 
-// cmdServe is the "serve" command: run the HTTP control panel and API.
-func cmdServe(cfg Config, args []string, stdout, stderr io.Writer) error {
+// cmdServe is the "serve" command: run the headless daemon exposing the
+// JSON API. flags is unused here — -direct only affects one-shot commands'
+// routing (see routeCommand), and has no meaning for the daemon itself.
+func cmdServe(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
 	return serve(cfg, stdout)
 }
 
+// serve starts the headless HTTP daemon: a persistent Bluetooth connection
+// behind a JSON API, with no browser UI. One-shot CLI invocations detect
+// this daemon (daemonAvailable in client.go) and route through it instead
+// of dialing fresh each time, because dialing costs seconds and rapid
+// reconnects can wedge the device (see
+// docs/superpowers/specs/hardware-smoke.md).
 func serve(cfg Config, stdout io.Writer) error {
-	fmt.Fprintf(stdout, "go-divoom serving %s\n", listenURL(cfg.ListenAddr))
+	fmt.Fprintf(stdout, "go-divoom daemon: JSON API at %s (no browser UI)\n", daemonBaseURL(cfg.ListenAddr))
 	fmt.Fprintf(stdout, "device: %s\n", describeDevice(cfg))
 	srv := newServer(cfg, dial)
-	log.Printf("go-divoom listening on %s", cfg.ListenAddr)
+	log.Printf("go-divoom daemon listening on %s", cfg.ListenAddr)
 	return http.ListenAndServe(cfg.ListenAddr, srv)
-}
-
-// listenURL renders a listen address (e.g. ":8377" or "0.0.0.0:8377") as a
-// URL a user can open in a browser.
-func listenURL(addr string) string {
-	if strings.HasPrefix(addr, ":") {
-		return "http://localhost" + addr
-	}
-	return "http://" + addr
 }
 
 // describeDevice summarizes the configured transport and device address for

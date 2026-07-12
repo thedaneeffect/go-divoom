@@ -1,5 +1,2 @@
 bin/
-web/node_modules/
-web/dist/
-cmd/divoom/webdist/
 /divoom

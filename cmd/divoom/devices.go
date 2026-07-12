@@ -27,7 +27,7 @@ type foundDevice struct {
 // Pixoo's MAC without a separate tool. It shells out to the OS's Bluetooth
 // CLI if one is available, falling back to a message pointing at the OS
 // Bluetooth settings otherwise. No new Go module dependencies are used.
-func cmdDevices(cfg Config, args []string, stdout, stderr io.Writer) error {
+func cmdDevices(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
 	if runtime.GOOS == "darwin" {
 		fmt.Fprintf(stdout, "scanning for %ds (device must already be paired to appear reliably)...\n", inquirySeconds)
 	}
