@@ -125,6 +125,14 @@ input[type='range'] {
   accent-color: var(--accent);
 }
 
+/* Without this the checkbox renders in the browser's default blue, which is the
+   one color on the page that belongs to no part of the palette. */
+input[type='checkbox'] {
+  accent-color: var(--accent);
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
 input[type='color'] {
   width: var(--touch);
   height: var(--touch);

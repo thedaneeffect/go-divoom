@@ -10,10 +10,10 @@
 
 <div class="screen">
   <button onclick={() => setScreen(true)} disabled={device.busy}>
-    {device.busy ? 'Sending…' : 'Turn screen on'}
+    {device.busy ? 'Sending…' : 'Turn on'}
   </button>
   <button onclick={() => setScreen(false)} disabled={device.busy}>
-    {device.busy ? 'Sending…' : 'Turn screen off'}
+    {device.busy ? 'Sending…' : 'Turn off'}
   </button>
 </div>
 

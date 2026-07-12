@@ -18,7 +18,7 @@
     <input type="checkbox" bind:checked={twentyFour} disabled={device.busy} />
     24-hour clock
   </label>
-  <button onclick={send} disabled={device.busy}>{device.busy ? 'Sending…' : 'Show clock'}</button>
+  <button class="primary" onclick={send} disabled={device.busy}>{device.busy ? 'Sending…' : 'Show clock'}</button>
 </div>
 
 <style>

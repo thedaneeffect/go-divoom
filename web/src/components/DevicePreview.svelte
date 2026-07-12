@@ -13,7 +13,7 @@
 </script>
 
 <figure class="preview" style={`--glow: ${glow}`}>
-  <div class="bezel">
+  <div class="bezel" class:lit={!!device.lastSent}>
     {#if device.lastSent}
       <img
         bind:this={imgEl}
@@ -49,10 +49,20 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: var(--space-4);
+    box-shadow: inset 0 2px 10px rgb(0 0 0 / 0.7);
+    transition: box-shadow 400ms ease;
+  }
+
+  /* Only a panel with something on it emits light. An unlit matrix that glows
+     would undercut the one idea this element exists to convey. */
+  .bezel.lit {
     box-shadow:
       inset 0 2px 10px rgb(0 0 0 / 0.7),
       0 0 3.5rem 0.75rem color-mix(in srgb, var(--glow) 55%, transparent);
-    transition: box-shadow 400ms ease;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bezel { transition: none; }
   }
 
   .bezel img {
@@ -68,9 +78,11 @@
     inset: var(--space-4);
     pointer-events: none;
     border-radius: calc(var(--radius-lg) / 2);
+    /* Just enough to suggest discrete LEDs. Any heavier and the artwork reads as
+       graph paper instead of a panel. */
     background-image:
-      repeating-linear-gradient(to right, rgb(0 0 0 / 0.3) 0 1px, transparent 1px calc(100% / 32)),
-      repeating-linear-gradient(to bottom, rgb(0 0 0 / 0.3) 0 1px, transparent 1px calc(100% / 32));
+      repeating-linear-gradient(to right, rgb(0 0 0 / 0.14) 0 1px, transparent 1px calc(100% / 32)),
+      repeating-linear-gradient(to bottom, rgb(0 0 0 / 0.14) 0 1px, transparent 1px calc(100% / 32));
   }
 
   .empty {

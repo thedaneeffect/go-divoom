@@ -59,7 +59,7 @@
     <Card title="Text"><SendText /></Card>
     <Card title="Light"><LightCard /></Card>
     <Card title="Clock"><ClockCard /></Card>
-    <Card title="Screen"><ScreenCard /></Card>
+    <div class="span"><Card title="Screen"><ScreenCard /></Card></div>
   </div>
 </main>
 
@@ -103,6 +103,12 @@
   @media (min-width: 640px) {
     .grid {
       grid-template-columns: 1fr 1fr;
+    }
+
+    /* Screen is the odd card out; letting it run the full width reads as a
+       footer control rather than an orphan in a two-column row. */
+    .span {
+      grid-column: 1 / -1;
     }
   }
 

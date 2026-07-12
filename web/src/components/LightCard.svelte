@@ -34,7 +34,7 @@
     <input id="light-color" type="color" bind:value={color} disabled={device.busy} />
     <span class="mono">{color}</span>
   </div>
-  <button onclick={send} disabled={device.busy}>{device.busy ? 'Sending…' : 'Show color'}</button>
+  <button class="primary" onclick={send} disabled={device.busy}>{device.busy ? 'Sending…' : 'Show color'}</button>
 </div>
 
 <style>
