@@ -27,25 +27,26 @@ func (d *Device) Close() error {
 	return d.t.Close()
 }
 
-// pingTimeout bounds how long each Ping attempt waits for a reply.
-const pingTimeout = 2 * time.Second
+// roundtripTimeout bounds how long each roundtrip attempt waits for a reply.
+const roundtripTimeout = 2 * time.Second
 
-// pingAttempts is how many write+read roundtrips Ping makes before giving
-// up. Hardware-observed: the first write after opening /dev/cu.* can be
-// swallowed while the RFCOMM channel is still establishing, so a single
-// roundtrip reports a dead link on a device that is merely slow to come up.
-const pingAttempts = 3
+// roundtripAttempts is how many write+read roundtrips a barrier (Ping or
+// Flush) makes before giving up. Hardware-observed: the first write after
+// opening /dev/cu.* can be swallowed while the RFCOMM channel is still
+// establishing, so a single roundtrip reports a dead link on a device that
+// is merely slow to come up.
+const roundtripAttempts = 3
 
 // deadlineSetter is implemented by transports that support read deadlines
-// (e.g. *os.File). Ping uses it when available to bound the wait for a
+// (e.g. *os.File). roundtrip uses it when available to bound the wait for a
 // reply instead of risking an indefinite block.
 type deadlineSetter interface {
 	SetReadDeadline(time.Time) error
 }
 
 // Ping sends a lightweight status query ("get view") and blocks until the
-// device replies, retrying up to pingAttempts times with a fresh write and
-// a pingTimeout read deadline per attempt.
+// device replies, retrying up to roundtripAttempts times with a fresh write
+// and a roundtripTimeout read deadline per attempt.
 //
 // This exists because opening a macOS Bluetooth serial port
 // (/dev/cu.Pixoo-Max-*) succeeds, and writes to it report success, even when
@@ -56,12 +57,38 @@ type deadlineSetter interface {
 // failure. Callers should invoke Ping immediately after dialing, before
 // trusting the connection for anything else.
 func (d *Device) Ping() error {
+	return d.roundtrip()
+}
+
+// Flush blocks until a write/read roundtrip proves the device has drained
+// every command written so far on this connection.
+//
+// This exists because one-shot CLI invocations write a command and then
+// immediately close the transport: on hardware the RFCOMM channel tears
+// down before the device finishes consuming the command out of its input
+// buffer, so the command silently vanishes even though Write reported
+// success — the exact same defect Ping guards against at dial time, just at
+// the other end of the connection's life. RFCOMM delivers bytes reliably
+// and in order, so a "get view" request written after a command cannot be
+// answered until the device has processed everything ahead of it in the
+// stream; receiving that reply is proof the command already landed.
+//
+// Callers that keep the connection open across multiple commands (e.g. the
+// HTTP server) don't need this — only code about to close the transport
+// right after writing does.
+func (d *Device) Flush() error {
+	return d.roundtrip()
+}
+
+// roundtrip performs the shared write("get view")+read barrier used by both
+// Ping and Flush, retrying up to roundtripAttempts times.
+func (d *Device) roundtrip() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	var lastErr error
-	for i := 0; i < pingAttempts; i++ {
-		lastErr = d.pingOnce()
+	for i := 0; i < roundtripAttempts; i++ {
+		lastErr = d.roundtripOnce()
 		if lastErr == nil {
 			return nil
 		}
@@ -69,14 +96,14 @@ func (d *Device) Ping() error {
 	return lastErr
 }
 
-// pingOnce performs a single write+read roundtrip. Caller must hold d.mu.
-func (d *Device) pingOnce() error {
+// roundtripOnce performs a single write+read roundtrip. Caller must hold d.mu.
+func (d *Device) roundtripOnce() error {
 	if _, err := d.t.Write(makeCommand(0x46, nil)); err != nil {
 		return fmt.Errorf("divoom: write: %w", err)
 	}
 
 	if dl, ok := d.t.(deadlineSetter); ok {
-		if err := dl.SetReadDeadline(time.Now().Add(pingTimeout)); err != nil {
+		if err := dl.SetReadDeadline(time.Now().Add(roundtripTimeout)); err != nil {
 			return fmt.Errorf("divoom: set read deadline: %w", err)
 		}
 		defer dl.SetReadDeadline(time.Time{})

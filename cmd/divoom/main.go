@@ -107,17 +107,50 @@ func run() {
 	}
 }
 
+// withDevice dials the device, runs fn, and flushes before closing.
+//
+// One-shot CLI invocations only get a single write/read cycle before the
+// transport goes away, unlike `divoom serve`'s long-lived connection. On
+// hardware, closing the RFCOMM channel immediately after a write can tear
+// down the link before the device has consumed it, silently dropping the
+// command even though Write and Ping both reported success. runDevice's
+// trailing d.Flush() is a barrier that blocks until the device proves it
+// has drained fn's writes, so that failure surfaces instead of vanishing.
+//
+// The transport must be closed on every exit path — including after a
+// fatal error — because a fatal() call below os.Exits, which would skip a
+// deferred Close and can leave the Bluetooth ACL link up, wedging the
+// adapter for other connections. So the work runs in runDevice, which
+// returns an error instead of calling fatal, and Close always runs before
+// this function reports anything and exits.
 func withDevice(cfg Config, fn func(*divoom.Device) error) {
 	t, err := dial(cfg)
 	if err != nil {
 		fatal(err)
 	}
 	d := divoom.NewDevice(t, divoom.PixooMax)
-	defer d.Close()
-	if err := d.Ping(); err != nil {
-		fatal(err)
+	runErr := runDevice(d, fn)
+	closeErr := d.Close()
+	if runErr != nil {
+		if closeErr != nil {
+			fmt.Fprintln(os.Stderr, "divoom: close:", closeErr)
+		}
+		fatal(runErr)
 	}
-	fatal(fn(d))
+	fatal(closeErr)
+}
+
+// runDevice pings to confirm the link is live, runs fn, then flushes to
+// confirm the device drained fn's writes before the caller closes the
+// transport out from under it.
+func runDevice(d *divoom.Device, fn func(*divoom.Device) error) error {
+	if err := d.Ping(); err != nil {
+		return err
+	}
+	if err := fn(d); err != nil {
+		return err
+	}
+	return d.Flush()
 }
 
 func dial(cfg Config) (divoom.Transport, error) {

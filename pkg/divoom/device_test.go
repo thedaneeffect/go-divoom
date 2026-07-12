@@ -110,6 +110,47 @@ func TestDevicePingNoResponse(t *testing.T) {
 	}
 }
 
+// Flush shares Ping's roundtrip helper but is called after a command write,
+// right before a one-shot CLI command closes the transport, to prove the
+// device drained the write instead of it vanishing when the link tears down.
+func TestDeviceFlushSuccess(t *testing.T) {
+	pt := &pingTransport{}
+	d := NewDevice(pt, PixooMax)
+	if err := d.SetBrightness(50); err != nil {
+		t.Fatal(err)
+	}
+	prior := append([]byte{}, pt.Bytes()...) // command bytes written before Flush
+
+	if err := d.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := pt.Bytes()
+	if !bytes.HasPrefix(got, prior) {
+		t.Fatalf("Flush must not alter bytes already written: got %x, want prefix %x", got, prior)
+	}
+	getView := mustHex(t, "01030046490002")
+	if after := got[len(prior):]; !bytes.Equal(after, getView) {
+		t.Errorf("Flush should write a get-view request after the prior command: got %x, want %x", after, getView)
+	}
+}
+
+func TestDeviceFlushNoResponse(t *testing.T) {
+	st := &silentTransport{}
+	d := NewDevice(st, PixooMax)
+	if err := d.SetBrightness(50); err != nil {
+		t.Fatal(err)
+	}
+
+	err := d.Flush()
+	if err == nil {
+		t.Fatal("expected error when device never responds")
+	}
+	if !strings.Contains(err.Error(), "no response") {
+		t.Errorf("error = %q, want it to mention %q", err.Error(), "no response")
+	}
+}
+
 // Goldens from testdata/gen_goldens.py; brightness also hardware-validated.
 func TestDeviceSetBrightness(t *testing.T) {
 	d, ft := newFakeDevice()
