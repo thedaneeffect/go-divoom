@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"image"
 	"image/gif"
+	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,10 +42,45 @@ func newServer(cfg Config, dialer func(Config) (divoom.Transport, error)) *serve
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
 
-func serve(cfg Config) error {
+// cmdServe is the "serve" command: run the HTTP control panel and API.
+func cmdServe(cfg Config, args []string, stdout, stderr io.Writer) error {
+	return serve(cfg, stdout)
+}
+
+func serve(cfg Config, stdout io.Writer) error {
+	fmt.Fprintf(stdout, "go-divoom serving %s\n", listenURL(cfg.ListenAddr))
+	fmt.Fprintf(stdout, "device: %s\n", describeDevice(cfg))
 	srv := newServer(cfg, dial)
 	log.Printf("go-divoom listening on %s", cfg.ListenAddr)
 	return http.ListenAndServe(cfg.ListenAddr, srv)
+}
+
+// listenURL renders a listen address (e.g. ":8377" or "0.0.0.0:8377") as a
+// URL a user can open in a browser.
+func listenURL(addr string) string {
+	if strings.HasPrefix(addr, ":") {
+		return "http://localhost" + addr
+	}
+	return "http://" + addr
+}
+
+// describeDevice summarizes the configured transport and device address for
+// display in `divoom serve`'s startup banner.
+func describeDevice(cfg Config) string {
+	switch cfg.Transport {
+	case "serial":
+		if cfg.SerialPath == "" {
+			return "serial (not configured; run `divoom use /dev/cu.YourPixoo`)"
+		}
+		return "serial " + cfg.SerialPath
+	case "rfcomm":
+		if cfg.MAC == "" {
+			return "rfcomm (not configured; run `divoom use <mac>`)"
+		}
+		return "rfcomm " + cfg.MAC
+	default:
+		return cfg.Transport
+	}
 }
 
 // device returns the connected device, dialing if needed. Caller must not

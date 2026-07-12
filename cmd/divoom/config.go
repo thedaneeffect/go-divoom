@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -53,6 +54,25 @@ func loadConfig() (Config, error) {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// cmdConfig prints the config file's path, then its contents if it exists.
+// If no config has been saved yet, it points the user at `divoom use`
+// rather than printing nothing, which used to look like a silent failure.
+func cmdConfig(cfg Config, args []string, stdout, stderr io.Writer) error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, path)
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		fmt.Fprint(stdout, string(data))
+	case errors.Is(err, fs.ErrNotExist):
+		fmt.Fprintln(stdout, "no config yet — run `divoom use <mac>`")
+	}
+	return nil
 }
 
 func saveConfig(cfg Config) error {

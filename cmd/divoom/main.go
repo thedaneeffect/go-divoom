@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/gif"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -20,17 +21,77 @@ func main() {
 	// On macOS the IOBluetooth transport needs the main thread servicing
 	// the event loop, so all real work runs on a second goroutine.
 	// Elsewhere RunEventLoop is a plain call.
-	divoom.RunEventLoop(run)
+	divoom.RunEventLoop(func() {
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	})
 }
 
-func run() {
-	serialFlag := flag.String("serial", "", "serial port path (overrides config)")
-	macFlag := flag.String("mac", "", "Bluetooth MAC for RFCOMM (overrides config)")
-	flag.Parse()
+// run parses args and dispatches to a command, writing to stdout/stderr and
+// returning a process exit code. It contains no os.Exit calls itself so it
+// can be exercised directly from tests; main is the only caller that turns
+// its return value into a real exit.
+func run(args []string, stdout, stderr io.Writer) int {
+	// flag.Usage is part of the standard library's help contract: anything
+	// that ends up driving flag.CommandLine (e.g. a future package using the
+	// top-level flag.* funcs) picks up our manual instead of the default
+	// one-line dump.
+	flag.Usage = func() { printUsage(stderr) }
+
+	if len(args) == 0 {
+		// Bare `divoom` used to silently start the server, which surprised
+		// users expecting a command list. Print help instead; `divoom serve`
+		// still works when asked for explicitly.
+		printUsage(stdout)
+		return 0
+	}
+	if isHelpArg(args[0]) {
+		if len(args) > 1 {
+			return helpFor(args[1], stdout, stderr)
+		}
+		printUsage(stdout)
+		return 0
+	}
+
+	fs := flag.NewFlagSet("divoom", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() { printUsage(stderr) }
+	serialFlag := fs.String("serial", "", serialFlagUsage)
+	macFlag := fs.String("mac", "", macFlagUsage)
+	if err := fs.Parse(args); err != nil {
+		// fs.Usage already printed the manual to stderr (flag calls it for
+		// both -h/--help and genuine parse errors).
+		return 2
+	}
+
+	rest := fs.Args()
+	if len(rest) == 0 {
+		printUsage(stdout)
+		return 0
+	}
+	name, cmdArgs := rest[0], rest[1:]
+
+	if len(cmdArgs) > 0 && isHelpArg(cmdArgs[0]) {
+		return helpFor(name, stdout, stderr)
+	}
+	if name == "help" {
+		if len(cmdArgs) == 0 {
+			printUsage(stdout)
+			return 0
+		}
+		return helpFor(cmdArgs[0], stdout, stderr)
+	}
+
+	cmd, ok := lookupCommand(name)
+	if !ok {
+		fmt.Fprintf(stderr, "divoom: unknown command %q\n\n", name)
+		printUsage(stderr)
+		return 2
+	}
 
 	cfg, err := loadConfig()
 	if err != nil {
-		fatal(err)
+		fmt.Fprintln(stderr, "divoom:", err)
+		return 1
 	}
 	if *serialFlag != "" {
 		cfg.Transport, cfg.SerialPath = "serial", *serialFlag
@@ -39,72 +100,93 @@ func run() {
 		cfg.Transport, cfg.MAC = "rfcomm", *macFlag
 	}
 
-	args := flag.Args()
-	cmd := "serve"
-	if len(args) > 0 {
-		cmd = args[0]
-		args = args[1:]
+	if err := cmd.run(cfg, cmdArgs, stdout, stderr); err != nil {
+		fmt.Fprintln(stderr, "divoom:", err)
+		return 1
 	}
+	return 0
+}
 
-	switch cmd {
-	case "serve":
-		fatal(serve(cfg))
-	case "config":
-		path, _ := configPath()
-		fmt.Println(path)
-		data, err := os.ReadFile(path)
-		if err == nil {
-			fmt.Print(string(data))
-		}
-	case "send":
-		requireArgs(args, 1, "send <image file>")
-		withDevice(cfg, func(d *divoom.Device) error { return sendFile(d, args[0]) })
-	case "text":
-		requireArgs(args, 1, "text <message>")
-		withDevice(cfg, func(d *divoom.Device) error {
-			return d.ShowText(strings.Join(args, " "), divoom.TextOptions{})
-		})
-	case "brightness":
-		requireArgs(args, 1, "brightness <0-100>")
+// helpFor prints the focused manual page for one command to stdout, or (if
+// name isn't a known command) a usage error to stderr, matching the
+// unknown-command behavior in run.
+func helpFor(name string, stdout, stderr io.Writer) int {
+	cmd, ok := lookupCommand(name)
+	if !ok {
+		fmt.Fprintf(stderr, "divoom: unknown command %q\n\n", name)
+		printUsage(stderr)
+		return 2
+	}
+	printCommandHelp(stdout, cmd)
+	return 0
+}
+
+func cmdSend(cfg Config, args []string, stdout, stderr io.Writer) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: divoom send <image file>")
+	}
+	return withDevice(cfg, func(d *divoom.Device) error { return sendFile(d, args[0]) })
+}
+
+func cmdText(cfg Config, args []string, stdout, stderr io.Writer) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: divoom text <message>")
+	}
+	return withDevice(cfg, func(d *divoom.Device) error {
+		return d.ShowText(strings.Join(args, " "), divoom.TextOptions{})
+	})
+}
+
+func cmdBrightness(cfg Config, args []string, stdout, stderr io.Writer) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: divoom brightness <0-100>")
+	}
+	v, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("brightness must be a number: %w", err)
+	}
+	return withDevice(cfg, func(d *divoom.Device) error { return d.SetBrightness(v) })
+}
+
+func cmdOn(cfg Config, args []string, stdout, stderr io.Writer) error {
+	return withDevice(cfg, (*divoom.Device).ScreenOn)
+}
+
+func cmdOff(cfg Config, args []string, stdout, stderr io.Writer) error {
+	return withDevice(cfg, (*divoom.Device).ScreenOff)
+}
+
+func cmdClock(cfg Config, args []string, stdout, stderr io.Writer) error {
+	style := 0
+	if len(args) > 0 {
 		v, err := strconv.Atoi(args[0])
 		if err != nil {
-			fatal(fmt.Errorf("brightness must be a number: %w", err))
+			return fmt.Errorf("clock style must be a number: %w", err)
 		}
-		withDevice(cfg, func(d *divoom.Device) error { return d.SetBrightness(v) })
-	case "on":
-		withDevice(cfg, (*divoom.Device).ScreenOn)
-	case "off":
-		withDevice(cfg, (*divoom.Device).ScreenOff)
-	case "clock":
-		style := 0
-		if len(args) > 0 {
-			v, err := strconv.Atoi(args[0])
-			if err != nil {
-				fatal(fmt.Errorf("clock style must be a number: %w", err))
-			}
-			style = v
-		}
-		withDevice(cfg, func(d *divoom.Device) error {
-			return d.ShowClock(divoom.ClockOptions{Style: style, TwentyFour: true})
-		})
-	case "light":
-		requireArgs(args, 1, "light <#RRGGBB> [brightness]")
-		rgb, err := parseHexColor(args[0])
-		if err != nil {
-			fatal(err)
-		}
-		brightness := 100
-		if len(args) > 1 {
-			v, err := strconv.Atoi(args[1])
-			if err != nil {
-				fatal(fmt.Errorf("light brightness must be a number: %w", err))
-			}
-			brightness = v
-		}
-		withDevice(cfg, func(d *divoom.Device) error { return d.ShowLight(rgb, brightness, true) })
-	default:
-		fatal(fmt.Errorf("unknown command %q (serve|send|text|brightness|on|off|clock|light|config)", cmd))
+		style = v
 	}
+	return withDevice(cfg, func(d *divoom.Device) error {
+		return d.ShowClock(divoom.ClockOptions{Style: style, TwentyFour: true})
+	})
+}
+
+func cmdLight(cfg Config, args []string, stdout, stderr io.Writer) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: divoom light <#RRGGBB> [brightness]")
+	}
+	rgb, err := parseHexColor(args[0])
+	if err != nil {
+		return err
+	}
+	brightness := 100
+	if len(args) > 1 {
+		v, err := strconv.Atoi(args[1])
+		if err != nil {
+			return fmt.Errorf("light brightness must be a number: %w", err)
+		}
+		brightness = v
+	}
+	return withDevice(cfg, func(d *divoom.Device) error { return d.ShowLight(rgb, brightness, true) })
 }
 
 // withDevice dials the device, runs fn, and flushes before closing.
@@ -118,15 +200,14 @@ func run() {
 // has drained fn's writes, so that failure surfaces instead of vanishing.
 //
 // The transport must be closed on every exit path — including after a
-// fatal error — because a fatal() call below os.Exits, which would skip a
-// deferred Close and can leave the Bluetooth ACL link up, wedging the
-// adapter for other connections. So the work runs in runDevice, which
-// returns an error instead of calling fatal, and Close always runs before
-// this function reports anything and exits.
-func withDevice(cfg Config, fn func(*divoom.Device) error) {
+// fatal error — because skipping it can leave the Bluetooth ACL link up,
+// wedging the adapter for other connections. So the work runs in
+// runDevice, which returns an error instead of exiting, and Close always
+// runs before this function returns anything to its caller.
+func withDevice(cfg Config, fn func(*divoom.Device) error) error {
 	t, err := dial(cfg)
 	if err != nil {
-		fatal(err)
+		return err
 	}
 	d := divoom.NewDevice(t, divoom.PixooMax)
 	runErr := runDevice(d, fn)
@@ -135,9 +216,9 @@ func withDevice(cfg Config, fn func(*divoom.Device) error) {
 		if closeErr != nil {
 			fmt.Fprintln(os.Stderr, "divoom: close:", closeErr)
 		}
-		fatal(runErr)
+		return runErr
 	}
-	fatal(closeErr)
+	return closeErr
 }
 
 // runDevice pings to confirm the link is live, runs fn, then flushes to
@@ -212,17 +293,4 @@ func parseHexColor(s string) ([3]uint8, error) {
 		return [3]uint8{}, fmt.Errorf("invalid color %q: %w", s, err)
 	}
 	return [3]uint8{uint8(v >> 16), uint8(v >> 8), uint8(v)}, nil
-}
-
-func requireArgs(args []string, n int, usage string) {
-	if len(args) < n {
-		fatal(fmt.Errorf("usage: divoom %s", usage))
-	}
-}
-
-func fatal(err error) {
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "divoom:", err)
-		os.Exit(1)
-	}
 }
