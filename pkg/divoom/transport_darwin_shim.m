@@ -32,19 +32,29 @@
 // ---- Event loop -----------------------------------------------------------
 
 static atomic_int divoom_loop_stop;    // set by divoom_stop_event_loop
-static atomic_int divoom_loop_running; // set while divoom_run_event_loop runs
+static atomic_int divoom_loop_running; // set by divoom_event_loop_prepare
+
+void divoom_event_loop_prepare(void) {
+    // Runs before the caller starts any worker that may dial, so a dial
+    // issued immediately never observes a not-yet-running loop. Resetting
+    // the stop flag here is what makes sequential run/stop cycles work.
+    atomic_store(&divoom_loop_stop, 0);
+    atomic_store(&divoom_loop_running, 1);
+}
 
 void divoom_run_event_loop(void) {
-    atomic_store(&divoom_loop_running, 1);
     // A runloop with no sources returns from CFRunLoopRunInMode immediately;
     // park a far-future timer so the loop actually blocks between events.
     CFRunLoopTimerRef keepalive = CFRunLoopTimerCreate(
         kCFAllocatorDefault, CFAbsoluteTimeGetCurrent() + 1e9, 1e9, 0, 0,
         NULL, NULL);
     CFRunLoopAddTimer(CFRunLoopGetCurrent(), keepalive, kCFRunLoopDefaultMode);
+    // The 0.5s cap bounds the lost-wakeup window: a CFRunLoopStop that
+    // lands between the flag check and loop entry would otherwise leave the
+    // loop parked for a full timeout with the stop flag already set.
     while (!atomic_load(&divoom_loop_stop)) {
         @autoreleasepool {
-            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 3600.0, true);
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.5, true);
         }
     }
     CFRunLoopRemoveTimer(CFRunLoopGetCurrent(), keepalive, kCFRunLoopDefaultMode);
@@ -186,13 +196,17 @@ static void divoom_release_later(DivoomRFCOMMConn *conn) {
 }
 
 // divoom_teardown closes the channel/connection (any thread; these are XPC
-// sends) and schedules the fd close + delegate release on the main queue.
+// sends) and schedules the delegate detach + fd close on the main queue.
 // Consumes the caller's reference to conn.
 static void divoom_teardown(DivoomRFCOMMConn *conn) {
     [conn->channel closeChannel];
     [conn->device closeConnection];
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_main_queue(), ^{
+      // Delegate callbacks are delivered serially on this queue, so after
+      // this block no further callback can reach conn; the grace-period
+      // release below is defense in depth only.
+      [conn->channel setDelegate:nil];
       [conn closeWriteFD];
       dispatch_semaphore_signal(done);
     });
@@ -217,6 +231,9 @@ int divoom_rfcomm_open(const char *addr, uint8_t channel, int write_fd,
         fcntl(write_fd, F_SETFL, fl | O_NONBLOCK);
 
         if (!atomic_load(&divoom_loop_running)) {
+            // Direct close is safe (and required) here: no connection object
+            // exists yet, and with no running loop a main-queue dispatch
+            // would never execute and the fd would leak.
             close(write_fd);
             return DIVOOM_ERR_NO_EVENT_LOOP;
         }
@@ -229,8 +246,12 @@ int divoom_rfcomm_open(const char *addr, uint8_t channel, int write_fd,
         IOBluetoothDevice *dev = [IOBluetoothDevice
             deviceWithAddressString:[NSString stringWithUTF8String:addr]];
         if (dev == nil) {
-            close(write_fd);
-            conn->writeFD = -1;
+            // fd close stays on the main queue per the serialization
+            // invariant; the block's copy retains conn, so the immediate
+            // release is safe (no delegate was ever registered).
+            dispatch_async(dispatch_get_main_queue(), ^{
+              [conn closeWriteFD];
+            });
             [conn release];
             return (int)kIOReturnNoDevice;
         }
@@ -242,8 +263,9 @@ int divoom_rfcomm_open(const char *addr, uint8_t channel, int write_fd,
                                          delegate:conn];
         if (st != kIOReturnSuccess || ch == nil) {
             [dev closeConnection];
-            close(write_fd);
-            conn->writeFD = -1;
+            dispatch_async(dispatch_get_main_queue(), ^{
+              [conn closeWriteFD];
+            });
             divoom_release_later(conn); // late callbacks may still arrive
             return st != kIOReturnSuccess ? (int)st : (int)kIOReturnError;
         }

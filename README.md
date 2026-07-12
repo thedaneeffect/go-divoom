@@ -9,7 +9,7 @@ Reimplementation of the reverse-engineered Divoom binary protocol, validated byt
 - Static images (PNG/JPEG/GIF) and animated GIFs, auto-resized to 16×16 or 32×32
 - Scrolling text, brightness, solid-color light, clock faces, screen on/off, time sync
 - Web panel (embedded, no separate deploy) and JSON REST API
-- Transports: macOS Bluetooth serial (`/dev/cu.*`), native RFCOMM sockets on Linux and Windows — all pure Go, no cgo
+- Transports: native RFCOMM everywhere — IOBluetooth on macOS (cgo), RFCOMM sockets on Linux and Windows (pure Go) — plus macOS Bluetooth serial (`/dev/cu.*`) as a fallback
 
 ## Build
 
@@ -40,14 +40,14 @@ Server + web panel (recommended, especially on macOS — see quirks):
 One-shot CLI:
 
 ```bash
-./bin/divoom -serial /dev/cu.Pixoo-Max brightness 40
-./bin/divoom -serial /dev/cu.Pixoo-Max send image.png    # or animated .gif
-./bin/divoom -serial /dev/cu.Pixoo-Max text 'HELLO'
-./bin/divoom -serial /dev/cu.Pixoo-Max light '#ff8800' 80
-./bin/divoom -serial /dev/cu.Pixoo-Max clock 1
-./bin/divoom -serial /dev/cu.Pixoo-Max on|off
+./bin/divoom -mac AA:BB:CC:DD:EE:FF brightness 40
+./bin/divoom -mac AA:BB:CC:DD:EE:FF send image.png    # or animated .gif
+./bin/divoom -mac AA:BB:CC:DD:EE:FF text 'HELLO'
+./bin/divoom -mac AA:BB:CC:DD:EE:FF light '#ff8800' 80
+./bin/divoom -mac AA:BB:CC:DD:EE:FF clock 1
+./bin/divoom -mac AA:BB:CC:DD:EE:FF on|off
 ./bin/divoom config           # print config path + contents
-# Linux/Windows: replace -serial with -mac AA:BB:CC:DD:EE:FF
+# macOS serial fallback: replace -mac ... with -serial /dev/cu.Pixoo-Max
 ```
 
 Settings persist to `~/.config/go-divoom/config.json` (server) and are editable in the web panel.
@@ -57,18 +57,41 @@ Settings persist to `~/.config/go-divoom/config.json` (server) and are editable 
 ```go
 import "github.com/thedaneeffect/go-divoom/pkg/divoom"
 
-t, err := divoom.DialSerial("/dev/cu.Pixoo-Max") // or divoom.DialRFCOMM(mac, 1)
-d := divoom.NewDevice(t, divoom.PixooMax)
-defer d.Close()
-if err := d.Ping(); err != nil { /* link not established */ }
-d.SendImage(img)                       // image.Image, auto-resized
-d.ShowText("HELLO", divoom.TextOptions{})
-d.SetBrightness(80)
+func main() {
+	divoom.RunEventLoop(func() { // see "macOS RFCOMM contract" below
+		t, err := divoom.DialRFCOMM(mac, 1) // or divoom.DialSerial("/dev/cu.Pixoo-Max")
+		d := divoom.NewDevice(t, divoom.PixooMax)
+		defer d.Close()
+		if err := d.Ping(); err != nil { /* link not established */ }
+		d.SendImage(img)                       // image.Image, auto-resized
+		d.ShowText("HELLO", divoom.TextOptions{})
+		d.SetBrightness(80)
+	})
+}
 ```
+
+### macOS RFCOMM contract
+
+Modern IOBluetooth delivers all RFCOMM events through the process **main
+dispatch queue**, so on macOS `DialRFCOMM` only works while
+`divoom.RunEventLoop` is servicing the main event loop:
+
+- Wrap your program's work in `divoom.RunEventLoop(func() { ... })` from
+  `main`. On every other platform (and in `CGO_ENABLED=0` macOS builds)
+  `RunEventLoop` is a plain pass-through that just calls the function, so
+  the same code stays portable. Sequential `RunEventLoop` calls are
+  supported.
+- Importing `pkg/divoom` in a darwin cgo build pins the main goroutine to
+  the main OS thread (`runtime.LockOSThread` in an `init`); this is what
+  guarantees `RunEventLoop` runs on the thread macOS requires.
+- If a process is killed mid-connection, macOS can leave the baseband (ACL)
+  link up, which makes *every* subsequent RFCOMM connect fail until it is
+  cleared: `blueutil --disconnect <mac>` recovers. `Close` always drops the
+  link, so normal use never hits this.
 
 ## macOS Bluetooth quirks (Pixoo Max)
 
-- Closing the serial port drops the Bluetooth connection, and re-opening it often gets a dead channel; only re-pairing reliably recovers (`blueutil --unpair <mac> && blueutil --pair <mac> && blueutil --connect <mac>`). **Prefer server mode** — it holds one connection open.
+- The serial (`/dev/cu.*`) transport survives roughly one open per pairing: closing the port drops the Bluetooth connection and re-opening it often gets a dead channel that only re-pairing recovers (`blueutil --unpair <mac> && blueutil --pair <mac> && blueutil --connect <mac>`). **Prefer `-mac` (IOBluetooth RFCOMM)** — it reconnects indefinitely.
 - Every dial performs a ping (request/response) so a dead link fails loudly instead of silently dropping commands.
 - Animation and text uploads take a few seconds over Bluetooth; commands queue in order.
 

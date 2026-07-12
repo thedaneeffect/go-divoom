@@ -17,10 +17,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// divoom_event_loop_prepare marks the event loop as running and clears any
+// previous stop request. Call it BEFORE starting workers that may dial and
+// before divoom_run_event_loop, so a dial issued immediately never races
+// the loop startup. The prepare/run/stop cycle may be repeated sequentially
+// (one loop at a time).
+void divoom_event_loop_prepare(void);
+
 // divoom_run_event_loop services the main-thread runloop (and with it the
 // main dispatch queue that IOBluetooth delivers callbacks on). Must be
-// called on the process's main OS thread. Blocks until
-// divoom_stop_event_loop is called. Safe to call at most once at a time.
+// called on the process's main OS thread after divoom_event_loop_prepare.
+// Blocks until divoom_stop_event_loop is called.
 void divoom_run_event_loop(void);
 
 // divoom_stop_event_loop makes divoom_run_event_loop return. Callable from

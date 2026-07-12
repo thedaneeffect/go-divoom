@@ -36,7 +36,7 @@ func init() {
 // separate goroutine, returning once f returns. IOBluetooth delivers all
 // RFCOMM events (connection completion, received data) through the process
 // main queue, so DialRFCOMM only functions while this loop is running.
-// Must be called from the main goroutine:
+// Must be called from the main goroutine; sequential calls are supported:
 //
 //	func main() {
 //		divoom.RunEventLoop(func() {
@@ -44,6 +44,10 @@ func init() {
 //		})
 //	}
 func RunEventLoop(f func()) {
+	// Prepare marks the loop as running (and clears any previous stop
+	// request) before f starts, so a DialRFCOMM issued immediately cannot
+	// race the loop startup and see "event loop not running".
+	C.divoom_event_loop_prepare()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
