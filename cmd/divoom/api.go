@@ -19,6 +19,7 @@ import (
 type server struct {
 	mux    *http.ServeMux
 	dialer func(Config) (divoom.Transport, error)
+	scan   func() (devs []foundDevice, note string, err error)
 
 	mu  sync.Mutex
 	cfg Config
@@ -26,10 +27,11 @@ type server struct {
 }
 
 func newServer(cfg Config, dialer func(Config) (divoom.Transport, error)) *server {
-	s := &server{cfg: cfg, dialer: dialer, mux: http.NewServeMux()}
+	s := &server{cfg: cfg, dialer: dialer, scan: scanDevices, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	s.mux.HandleFunc("PUT /api/config", s.handlePutConfig)
+	s.mux.HandleFunc("GET /api/devices", s.handleDevices)
 	s.mux.HandleFunc("POST /api/brightness", s.handleBrightness)
 	s.mux.HandleFunc("POST /api/screen", s.handleScreen)
 	s.mux.HandleFunc("POST /api/light", s.handleLight)
@@ -158,6 +160,13 @@ func (s *server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, err)
 		return
 	}
+	// Reject configs that cannot possibly work before they ever touch disk
+	// or an existing connection — this is what stops the panel from
+	// silently overwriting a working rfcomm config with an unusable one.
+	if err := validateConfig(cfg); err != nil {
+		jsonError(w, http.StatusBadRequest, err)
+		return
+	}
 	if err := saveConfig(cfg); err != nil {
 		jsonError(w, http.StatusInternalServerError, err)
 		return
@@ -172,6 +181,42 @@ func (s *server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	s.cfg = cfg
 	s.mu.Unlock()
 	jsonOK(w)
+}
+
+// handleDevices runs a Bluetooth scan (the same one `divoom devices` uses)
+// and returns discovered devices as JSON. Scanning takes several seconds
+// (see inquirySeconds in devices.go) — that's inherent to a Bluetooth
+// inquiry scan, so callers should show a spinner/disabled state while this
+// is in flight rather than treating the latency as a bug.
+//
+// A device that is currently connected (e.g. still configured and in use)
+// will not answer an inquiry scan, so it may be absent from the results
+// even though it's nearby and paired.
+//
+// If scanning isn't supported on this platform, or the OS's scanner CLI
+// isn't installed, that's not a server error: devices comes back empty and
+// note explains how to find the MAC by hand. Only a genuine scanner
+// failure (the tool ran and errored) produces a non-2xx response.
+func (s *server) handleDevices(w http.ResponseWriter, r *http.Request) {
+	devs, note, err := s.scan()
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err)
+		return
+	}
+	type deviceJSON struct {
+		Name string `json:"name"`
+		MAC  string `json:"mac"`
+	}
+	out := make([]deviceJSON, 0, len(devs))
+	for _, d := range devs {
+		out = append(out, deviceJSON{Name: d.name, MAC: d.mac})
+	}
+	resp := map[string]any{"devices": out}
+	if note != "" {
+		resp["note"] = note
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (s *server) handleBrightness(w http.ResponseWriter, r *http.Request) {

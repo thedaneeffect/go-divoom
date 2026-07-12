@@ -12,6 +12,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -172,6 +174,148 @@ func TestConcurrentRequests(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func TestDevicesEndpoint(t *testing.T) {
+	srv, _ := newTestServer(t)
+	srv.scan = func() ([]foundDevice, string, error) {
+		return []foundDevice{
+			{mac: "AA:BB:CC:DD:EE:FF", name: "Pixoo-Max"},
+			{mac: "AA:BB:CC:DD:EE:FF", name: "Some Other Device"},
+		}, "", nil
+	}
+
+	req := httptest.NewRequest("GET", "/api/devices", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var got struct {
+		Devices []struct {
+			Name string `json:"name"`
+			MAC  string `json:"mac"`
+		} `json:"devices"`
+		Note string `json:"note"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Devices) != 2 || got.Devices[0].MAC != "AA:BB:CC:DD:EE:FF" || got.Devices[0].Name != "Pixoo-Max" {
+		t.Errorf("got %+v", got)
+	}
+	if got.Note != "" {
+		t.Errorf("note = %q, want empty", got.Note)
+	}
+}
+
+// TestDevicesEndpointUnsupportedPlatform verifies the "not a bug" path: no
+// scanner available for this OS/toolchain must come back as an empty list
+// plus an explanatory note, never a 500.
+func TestDevicesEndpointUnsupportedPlatform(t *testing.T) {
+	srv, _ := newTestServer(t)
+	srv.scan = func() ([]foundDevice, string, error) {
+		return nil, fallbackMessage, nil
+	}
+
+	req := httptest.NewRequest("GET", "/api/devices", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var got struct {
+		Devices []any  `json:"devices"`
+		Note    string `json:"note"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Devices) != 0 {
+		t.Errorf("devices = %+v, want empty", got.Devices)
+	}
+	if got.Note == "" {
+		t.Error("note is empty, want an explanation")
+	}
+}
+
+func TestDevicesEndpointScanError(t *testing.T) {
+	srv, _ := newTestServer(t)
+	srv.scan = func() ([]foundDevice, string, error) {
+		return nil, "", fmt.Errorf("blueutil --inquiry: exit status 1")
+	}
+
+	req := httptest.NewRequest("GET", "/api/devices", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", w.Code)
+	}
+}
+
+func TestPutConfigRejectsGarbageMAC(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	fc := &fakeConn{}
+	srv := newServer(defaultConfig(), func(Config) (divoom.Transport, error) { return fc, nil })
+
+	before, err := os.ReadFile(filepath.Join(dir, "go-divoom", "config.json"))
+	beforeExists := err == nil
+
+	req := httptest.NewRequest("PUT", "/api/config", bytes.NewBufferString(`{"transport":"rfcomm","mac":"not-a-mac"}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	after, err := os.ReadFile(filepath.Join(dir, "go-divoom", "config.json"))
+	afterExists := err == nil
+	if beforeExists != afterExists || (beforeExists && string(before) != string(after)) {
+		t.Errorf("config on disk changed: before(exists=%v)=%q after(exists=%v)=%q", beforeExists, before, afterExists, after)
+	}
+}
+
+func TestPutConfigAcceptsValidMAC(t *testing.T) {
+	srv, _ := newTestServer(t)
+	req := httptest.NewRequest("PUT", "/api/config", bytes.NewBufferString(`{"transport":"rfcomm","mac":"AA:BB:CC:DD:EE:FF"}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestPutConfigRejectsEmptySerialPath(t *testing.T) {
+	srv, _ := newTestServer(t)
+	req := httptest.NewRequest("PUT", "/api/config", bytes.NewBufferString(`{"transport":"serial","serialPath":""}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestPutConfigAcceptsSerialPath(t *testing.T) {
+	srv, _ := newTestServer(t)
+	req := httptest.NewRequest("PUT", "/api/config", bytes.NewBufferString(`{"transport":"serial","serialPath":"/dev/cu.Pixoo-Max"}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestPutConfigRejectsUnknownTransport(t *testing.T) {
+	srv, _ := newTestServer(t)
+	req := httptest.NewRequest("PUT", "/api/config", bytes.NewBufferString(`{"transport":"carrier-pigeon"}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
 }
 
 func TestImageUpload(t *testing.T) {

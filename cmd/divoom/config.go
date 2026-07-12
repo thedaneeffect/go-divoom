@@ -75,6 +75,32 @@ func cmdConfig(cfg Config, args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// validateConfig rejects configs that cannot possibly work: an unknown
+// transport, an rfcomm transport without a valid MAC, or a serial
+// transport without a path. It's the guard that would have prevented a
+// past bug where the web panel silently overwrote a working rfcomm config
+// with an empty/unusable serial one.
+//
+// This only gates the PUT /api/config HTTP handler, not saveConfig itself
+// — the CLI's `divoom use` and defaultConfig() both produce intentionally
+// partial configs (e.g. before a device has been chosen), and those must
+// still round-trip through loadConfig/saveConfig.
+func validateConfig(cfg Config) error {
+	switch cfg.Transport {
+	case "rfcomm":
+		if err := validateMAC(cfg.MAC); err != nil {
+			return err
+		}
+	case "serial":
+		if cfg.SerialPath == "" {
+			return fmt.Errorf("serial transport requires a non-empty serialPath")
+		}
+	default:
+		return fmt.Errorf(`transport must be "rfcomm" or "serial", got %q`, cfg.Transport)
+	}
+	return nil
+}
+
 func saveConfig(cfg Config) error {
 	path, err := configPath()
 	if err != nil {

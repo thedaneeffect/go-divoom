@@ -12,6 +12,8 @@ const post = (path: string, data: unknown) =>
     body: JSON.stringify(data),
   })
 
+export type DeviceInfo = { name: string; mac: string }
+
 export const getStatus = () => req('/api/status')
 export const getConfig = () => req('/api/config')
 export const putConfig = (cfg: unknown) =>
@@ -20,6 +22,13 @@ export const putConfig = (cfg: unknown) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(cfg),
   })
+// getDevices scans for nearby Bluetooth devices (same scan as `divoom
+// devices`). It takes several seconds — that's an inquiry scan, not a
+// bug — so callers should show a busy state while it's in flight. A
+// missing scanner on this platform comes back as an empty list plus a
+// `note` explaining how to find the MAC by hand, not an error.
+export const getDevices = (): Promise<{ devices: DeviceInfo[]; note?: string }> =>
+  req('/api/devices')
 export const setBrightness = (value: number) => post('/api/brightness', { value })
 export const setScreen = (on: boolean) => post('/api/screen', { on })
 export const setLight = (color: string, brightness: number) =>

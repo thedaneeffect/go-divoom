@@ -13,10 +13,11 @@ import (
 
 // inquirySeconds bounds how long a Bluetooth inquiry scan runs. Long enough
 // to catch a device that takes a moment to answer, short enough that
-// `divoom devices` still feels responsive.
+// `divoom devices` (and the panel's "Scan for devices" button) still feels
+// responsive.
 const inquirySeconds = 6
 
-// foundDevice is one Bluetooth device discovered by cmdDevices.
+// foundDevice is one Bluetooth device discovered by a scan.
 type foundDevice struct {
 	mac  string
 	name string
@@ -27,20 +28,44 @@ type foundDevice struct {
 // CLI if one is available, falling back to a message pointing at the OS
 // Bluetooth settings otherwise. No new Go module dependencies are used.
 func cmdDevices(cfg Config, args []string, stdout, stderr io.Writer) error {
-	switch runtime.GOOS {
-	case "darwin":
-		return scanDarwin(stdout)
-	case "linux":
-		return scanLinux(stdout)
-	default:
-		fmt.Fprintln(stdout, fallbackMessage)
-		return nil
+	if runtime.GOOS == "darwin" {
+		fmt.Fprintf(stdout, "scanning for %ds (device must already be paired to appear reliably)...\n", inquirySeconds)
 	}
+	devs, note, err := scanDevices()
+	if err != nil {
+		return err
+	}
+	if note != "" {
+		fmt.Fprintln(stdout, note)
+	}
+	printDevices(stdout, devs)
+	return nil
 }
 
 const fallbackMessage = "no supported Bluetooth scanner found for this OS.\n" +
 	"Pair the Pixoo in your OS's Bluetooth settings, find its MAC there,\n" +
 	"then run: divoom use <mac>"
+
+// scanDevices runs the platform-appropriate Bluetooth scan and returns the
+// devices it found. This is shared by `divoom devices` and the web panel's
+// GET /api/devices, so scanning logic lives in exactly one place.
+//
+// Scanning takes several seconds (inquirySeconds on macOS) — that's
+// inherent to a Bluetooth inquiry, not a bug. If no scanner is available
+// for this OS, or its CLI tool isn't installed, that is not treated as an
+// error: devs is nil and note explains how to find the MAC by hand instead.
+// A non-nil error means the scanner tool itself failed (e.g. it ran but
+// exited non-zero).
+func scanDevices() (devs []foundDevice, note string, err error) {
+	switch runtime.GOOS {
+	case "darwin":
+		return scanDarwin()
+	case "linux":
+		return scanLinux()
+	default:
+		return nil, fallbackMessage, nil
+	}
+}
 
 // blueutilLineRE matches blueutil's default output format, e.g.:
 //
@@ -50,19 +75,15 @@ var blueutilLineRE = regexp.MustCompile(`address:\s*([0-9a-fA-F-]{17}).*?name:\s
 // scanDarwin lists devices via blueutil (https://github.com/toy/blueutil),
 // a small, widely-installed (brew install blueutil) CLI wrapper around
 // IOBluetooth; it is not a Go dependency.
-func scanDarwin(stdout io.Writer) error {
+func scanDarwin() ([]foundDevice, string, error) {
 	if _, err := exec.LookPath("blueutil"); err != nil {
-		fmt.Fprintln(stdout, "blueutil not found (install: brew install blueutil).")
-		fmt.Fprintln(stdout, fallbackMessage)
-		return nil
+		return nil, "blueutil not found (install: brew install blueutil).\n" + fallbackMessage, nil
 	}
-	fmt.Fprintf(stdout, "scanning for %ds (device must already be paired to appear reliably)...\n", inquirySeconds)
 	out, err := exec.Command("blueutil", "--inquiry", strconv.Itoa(inquirySeconds)).Output()
 	if err != nil {
-		return fmt.Errorf("blueutil --inquiry: %w", err)
+		return nil, "", fmt.Errorf("blueutil --inquiry: %w", err)
 	}
-	printDevices(stdout, parseBlueutilOutput(string(out)))
-	return nil
+	return parseBlueutilOutput(string(out)), "", nil
 }
 
 func parseBlueutilOutput(out string) []foundDevice {
@@ -88,18 +109,15 @@ var bluetoothctlLineRE = regexp.MustCompile(`^Device\s+([0-9A-Fa-f:]{17})\s+(.*)
 
 // scanLinux lists devices via bluetoothctl (part of BlueZ), which ships
 // with most Linux Bluetooth stacks; it is not a Go dependency.
-func scanLinux(stdout io.Writer) error {
+func scanLinux() ([]foundDevice, string, error) {
 	if _, err := exec.LookPath("bluetoothctl"); err != nil {
-		fmt.Fprintln(stdout, "bluetoothctl not found.")
-		fmt.Fprintln(stdout, fallbackMessage)
-		return nil
+		return nil, "bluetoothctl not found.\n" + fallbackMessage, nil
 	}
 	out, err := exec.Command("bluetoothctl", "devices").Output()
 	if err != nil {
-		return fmt.Errorf("bluetoothctl devices: %w", err)
+		return nil, "", fmt.Errorf("bluetoothctl devices: %w", err)
 	}
-	printDevices(stdout, parseBluetoothctlOutput(string(out)))
-	return nil
+	return parseBluetoothctlOutput(string(out)), "", nil
 }
 
 func parseBluetoothctlOutput(out string) []foundDevice {
