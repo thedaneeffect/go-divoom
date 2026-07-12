@@ -418,13 +418,10 @@ func TestRouteCommandFallsBackWhenDaemonDown(t *testing.T) {
 	}
 }
 
-// TestRouteCommandDirectFlagSkipsProbe asserts -direct bypasses
-// probeDaemon entirely (not merely ignores a "true" answer) and always
-// dials directly.
-func TestRouteCommandDirectFlagSkipsProbe(t *testing.T) {
-	orig := probeDaemon
-	probeDaemon = func(Config) bool { t.Fatal("probeDaemon called; -direct must skip the probe"); return false }
-	t.Cleanup(func() { probeDaemon = orig })
+// TestRouteCommandDirectFlagDialsWhenDaemonDown asserts -direct takes the
+// direct-dial path when no daemon holds the device.
+func TestRouteCommandDirectFlagDialsWhenDaemonDown(t *testing.T) {
+	fakeProbe(t, false)
 	fakeDial(t, &alwaysRespondingConn{})
 
 	var directCalled bool
@@ -437,6 +434,30 @@ func TestRouteCommandDirectFlagSkipsProbe(t *testing.T) {
 	}
 	if !directCalled {
 		t.Error("direct function was not called")
+	}
+}
+
+// TestRouteCommandDirectFlagRefusedWhileDaemonUp guards a hardware hazard: the
+// device accepts one RFCOMM channel at a time, and dialing a second one while
+// the daemon holds the first wedges its Bluetooth stack until it is power-cycled
+// (observed on real hardware, IOReturn 0xe00002d6). -direct must therefore be
+// refused, not honored, while the daemon is reachable.
+func TestRouteCommandDirectFlagRefusedWhileDaemonUp(t *testing.T) {
+	fakeProbe(t, true)
+	fakeDial(t, nil) // dialing at all would be the bug
+
+	err := routeCommand(defaultConfig(), cliFlags{direct: true},
+		func(baseURL string) error { t.Fatal("daemon fn called; -direct must refuse, not route"); return nil },
+		func(d *divoom.Device) error {
+			t.Fatal("direct dial attempted while daemon holds the device")
+			return nil
+		},
+	)
+	if err == nil {
+		t.Fatal("want an error refusing -direct while the daemon is up, got nil")
+	}
+	if !strings.Contains(err.Error(), "daemon is running") {
+		t.Errorf("error should explain the daemon holds the connection, got: %v", err)
 	}
 }
 

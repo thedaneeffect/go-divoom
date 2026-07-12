@@ -233,7 +233,15 @@ func cmdLight(cfg Config, flags cliFlags, args []string, stdout, stderr io.Write
 // daemon already holds the device's only connection and a concurrent
 // direct dial would contend with it.
 func routeCommand(cfg Config, flags cliFlags, viaDaemon func(baseURL string) error, direct func(*divoom.Device) error) error {
-	if !flags.direct && probeDaemon(cfg) {
+	if probeDaemon(cfg) {
+		// The device accepts exactly one RFCOMM channel at a time, and dialing a
+		// second one while the daemon holds the first doesn't just fail — it wedges
+		// the device's Bluetooth stack until it is power-cycled. So -direct is
+		// refused rather than honored while the daemon is up.
+		if flags.direct {
+			return fmt.Errorf("the daemon is running and holds the device's only connection; " +
+				"stop it (or omit -direct) — dialing directly alongside it wedges the device")
+		}
 		return viaDaemon(daemonBaseURL(cfg.ListenAddr))
 	}
 	return withDevice(cfg, direct)
