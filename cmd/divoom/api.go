@@ -59,6 +59,20 @@ func serve(cfg Config, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "go-divoom daemon: JSON API at %s (no browser UI)\n", daemonBaseURL(cfg.ListenAddr))
 	fmt.Fprintf(stdout, "device: %s\n", describeDevice(cfg))
 	srv := newServer(cfg, dial)
+
+	// Dial in the background right away rather than waiting for the first
+	// request: server.device() otherwise dials lazily, which would mean
+	// the very first command routed here after startup pays the same
+	// dial cost a direct CLI invocation does — defeating the reason to
+	// route through the daemon at all. A failure here isn't fatal: it's
+	// exactly the error a direct dial would have hit too, and device()
+	// retries it on the first real request.
+	go func() {
+		if _, err := srv.device(); err != nil {
+			log.Printf("go-divoom: initial device connection failed (will retry on first command): %v", err)
+		}
+	}()
+
 	log.Printf("go-divoom daemon listening on %s", cfg.ListenAddr)
 	return http.ListenAndServe(cfg.ListenAddr, srv)
 }
