@@ -128,8 +128,8 @@ func daemonLight(baseURL string, rgb [3]uint8, brightness int) error {
 }
 
 // daemonClock posts to POST /api/clock (see handleClock). It only exposes
-// style and twentyFour since that's all the CLI's `clock` command accepts
-// (weather/temp/calendar are web-panel-only fields on the same endpoint).
+// style and twentyFour since that's all the CLI's `clock` command accepts;
+// the endpoint also takes weather/temp/calendar, which no command sets yet.
 func daemonClock(baseURL string, style int, twentyFour bool) error {
 	return daemonPostJSON(baseURL, "/api/clock", map[string]any{"style": style, "twentyFour": twentyFour})
 }
@@ -147,8 +147,7 @@ func daemonText(baseURL, text string) error {
 }
 
 // daemonSendImage uploads an image file to the daemon's POST /api/image as
-// multipart form data (field "file"), mirroring what the web panel used to
-// send. GIFs are tagged image/gif so handleImage takes its animated-GIF
+// multipart form data (field "file"). GIFs are tagged image/gif so handleImage takes its animated-GIF
 // branch; everything else is tagged application/octet-stream, since
 // image.Decode sniffs the format from content rather than Content-Type.
 func daemonSendImage(baseURL, path string) error {

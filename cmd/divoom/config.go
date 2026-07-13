@@ -78,7 +78,7 @@ func cmdConfig(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writ
 // validateConfig rejects configs that cannot possibly work: an unknown
 // transport, an rfcomm transport without a valid MAC, or a serial
 // transport without a path. It's the guard that would have prevented a
-// past bug where the web panel silently overwrote a working rfcomm config
+// past bug where a config write silently replaced a working rfcomm config
 // with an empty/unusable serial one.
 //
 // This only gates the PUT /api/config HTTP handler, not saveConfig itself

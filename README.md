@@ -60,6 +60,15 @@ Two consequences of the device accepting only one RFCOMM channel at a time:
 
 Settings persist to `~/.config/go-divoom/config.json`, editable via `divoom use <mac>` or the JSON API's `PUT /api/config`.
 
+## Sprite sheets
+
+`scripts/sheet2gif.py` splits a horizontal strip of 32×32 cells into an animated GIF, so a sprite sheet can go straight to the display. Frame count comes from the sheet's width, so adding poses needs no flags. Requires Python with Pillow.
+
+```bash
+./scripts/sheet2gif.py mario.png mario.gif --fps 5
+./bin/divoom send mario.gif
+```
+
 ## Library
 
 ```go

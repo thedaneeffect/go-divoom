@@ -13,8 +13,7 @@ import (
 
 // inquirySeconds bounds how long a Bluetooth inquiry scan runs. Long enough
 // to catch a device that takes a moment to answer, short enough that
-// `divoom devices` (and the panel's "Scan for devices" button) still feels
-// responsive.
+// `divoom devices` still feels responsive.
 const inquirySeconds = 6
 
 // foundDevice is one Bluetooth device discovered by a scan.
@@ -47,7 +46,7 @@ const fallbackMessage = "no supported Bluetooth scanner found for this OS.\n" +
 	"then run: divoom use <mac>"
 
 // scanDevices runs the platform-appropriate Bluetooth scan and returns the
-// devices it found. This is shared by `divoom devices` and the web panel's
+// devices it found. This is shared by `divoom devices` and the daemon's
 // GET /api/devices, so scanning logic lives in exactly one place.
 //
 // Scanning takes several seconds (inquirySeconds on macOS) — that's

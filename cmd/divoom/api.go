@@ -172,9 +172,10 @@ func (s *server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, err)
 		return
 	}
-	// Reject configs that cannot possibly work before they ever touch disk
-	// or an existing connection — this is what stops the panel from
-	// silently overwriting a working rfcomm config with an unusable one.
+	// Reject configs that cannot possibly work before they ever touch disk or
+	// an existing connection. Without this, a config naming no device (or one
+	// its transport can't use) is persisted happily and only fails later, at
+	// dial time, far from the write that caused it.
 	if err := validateConfig(cfg); err != nil {
 		jsonError(w, http.StatusBadRequest, err)
 		return
