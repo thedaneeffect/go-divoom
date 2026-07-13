@@ -131,10 +131,21 @@ func isCompleteFrame(b []byte) bool {
 	return len(b) >= 3 && b[len(b)-1] == 0x02
 }
 
+// chunkPacing is the gap left between the messages of a multi-message upload
+// (animations, scrolling text). The device has no flow control on this path: it
+// acknowledges nothing, and writes that arrive faster than it can consume them
+// are silently dropped — the animation still "uploads" and then plays back
+// truncated, which is how this was found. Flooding it hard enough also wedges
+// its Bluetooth stack outright (see docs/superpowers/specs/hardware-smoke.md).
+const chunkPacing = 20 * time.Millisecond
+
 func (d *Device) send(msgs ...[]byte) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for _, m := range msgs {
+	for i, m := range msgs {
+		if i > 0 {
+			time.Sleep(chunkPacing)
+		}
 		if _, err := d.t.Write(m); err != nil {
 			return fmt.Errorf("divoom: write: %w", err)
 		}

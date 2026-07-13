@@ -46,3 +46,25 @@ func TestShowTextSendsAnimation(t *testing.T) {
 		t.Errorf("first command byte = %#x, want 0x49", got)
 	}
 }
+
+// TestRenderTextFramesScrollsFully guards the bug where floor division ended the
+// scroll early, cutting the tail of the message mid-character: the last frame
+// must contain no text pixels at all, i.e. the message has fully left the screen.
+func TestRenderTextFramesScrollsFully(t *testing.T) {
+	for _, msg := range []string{"HI", "Hello, world", "a much longer message that must still finish"} {
+		frames := renderTextFrames(msg, 32, [3]uint8{255, 255, 255}, [3]uint8{0, 0, 0})
+		if len(frames) > maxAnimationFrames {
+			t.Errorf("%q: %d frames exceeds the device's %d-frame buffer", msg, len(frames), maxAnimationFrames)
+		}
+		last := frames[len(frames)-1]
+		for y := range 32 {
+			for x := range 32 {
+				r, g, b, _ := last.At(x, y).RGBA()
+				if r|g|b != 0 {
+					t.Errorf("%q: last frame still shows text at (%d,%d) — scroll ended early", msg, x, y)
+					break
+				}
+			}
+		}
+	}
+}
