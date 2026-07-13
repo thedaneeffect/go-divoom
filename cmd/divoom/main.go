@@ -191,6 +191,24 @@ func cmdText(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer
 	)
 }
 
+// cmdDisconnect releases the device so something else can use it. The device
+// accepts exactly one connection at a time, so a running daemon holding that
+// connection is what stops the phone app (or another host) from reaching it.
+//
+// Without a daemon there is nothing to release: one-shot commands close their
+// connection as they exit, so say so rather than pretending to do work.
+func cmdDisconnect(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
+	if !probeDaemon(cfg) {
+		fmt.Fprintln(stdout, "no daemon running; the device is already free")
+		return nil
+	}
+	if err := daemonDisconnect(daemonBaseURL(cfg.ListenAddr)); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "device released; the daemon is still running and will reconnect on the next command")
+	return nil
+}
+
 func cmdBrightness(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: divoom brightness <0-100>")

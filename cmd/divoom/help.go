@@ -52,6 +52,16 @@ var commands = []command{
 		run: cmdUse,
 	},
 	{
+		name:  "disconnect",
+		short: "release the device so something else can connect",
+		long: "Releases the device's Bluetooth connection. The Pixoo accepts exactly one connection at a time, so a running `divoom serve` daemon holds the only channel — this frees it for the Divoom phone app, another machine, or anyone you hand the device to.\n\n" +
+			"The daemon keeps running and reconnects on the next command, so this is not the same as stopping it. With no daemon running there is nothing to release: one-shot commands already close their connection as they exit.",
+		examples: []string{
+			"divoom disconnect",
+		},
+		run: cmdDisconnect,
+	},
+	{
 		name:  "config",
 		short: "print the config file path and contents",
 		long:  "Prints the config file's path, then its contents if it exists.",

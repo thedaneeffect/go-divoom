@@ -54,6 +54,21 @@ Consequences:
 - No storage ceiling was found up to 240 frames / 34 KB. `maxAnimationFrames` is a *budget* (bounding upload time), not a device limit.
 - This is the same failure mode as the unthrottled frame-push benchmark below: flood the device and it drops, then wedges. Pace everything.
 
+## One connection at a time (2026-07-13)
+
+The device serves exactly one RFCOMM channel. While it is connected, it stops answering inquiry and page requests, so a second host cannot reach it — and the errors it produces do not say so:
+
+| Host | Symptom while the device is held elsewhere |
+|---|---|
+| Linux / BlueZ | `EHOSTDOWN` on dial, and **no device object is created at all** — pairing can't even be attempted. Looks like the device is off. |
+| macOS / IOBluetooth | `IOReturn 0xe00002d6` on RFCOMM open. |
+
+Consequences, all verified on hardware:
+
+- A running `divoom serve` daemon holds the device's only channel. `divoom disconnect` (POST /api/disconnect) releases it while the daemon keeps running; the next command redials (measured: 10ms cached → 4.2s after release, i.e. a genuine redial).
+- The daemon releases the device on SIGINT/SIGTERM. Without that, killing it stranded the link, which is the same stale-ACL state that wedges every subsequent connect.
+- Dialing a second channel while one is held does not merely fail — it can wedge the device's Bluetooth stack until it is power-cycled. This is why `-direct` is refused while the daemon is up.
+
 ## Findings
 
 1. **Silent-drop defect (fixed).** Writes to `/dev/cu.*` succeed even when the RFCOMM link never establishes; commands vanish. Fix: `Device.Ping()` — a get-view request/response roundtrip used as a link-up barrier, with up to 3 retries because the first write after open can be swallowed during channel establishment. CLI and server both ping after dialing; failure is loud (`no response from device (link not established?)`).

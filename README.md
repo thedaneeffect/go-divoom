@@ -60,6 +60,23 @@ Two consequences of the device accepting only one RFCOMM channel at a time:
 
 Settings persist to `~/.config/go-divoom/config.json`, editable via `divoom use <mac>` or the JSON API's `PUT /api/config`.
 
+## Handing the device to something else
+
+The Pixoo accepts **exactly one connection at a time**, and a running `divoom serve` daemon holds it. Release it without stopping the daemon:
+
+```bash
+divoom disconnect     # daemon keeps running; reconnects on the next command
+```
+
+Stopping the daemon (Ctrl-C or `SIGTERM`) also releases the device — it closes the link on the way out rather than stranding it.
+
+While something else holds the device, connecting from another host fails in ways that don't obviously point at "it's already connected":
+
+- **Linux/BlueZ**: `EHOSTDOWN` on dial, and *no device object at all* — so pairing can't even be attempted. The Pixoo stops answering inquiry and page requests while connected, so BlueZ never builds the device object. It isn't down; it's busy.
+- **macOS**: `IOReturn 0xe00002d6` on RFCOMM open.
+
+In every case the fix is to release the device wherever it's currently held (`divoom disconnect`, quit the phone app, or stop the other daemon).
+
 ## Sprite sheets
 
 `scripts/sheet2gif.py` splits a horizontal strip of 32×32 cells into an animated GIF, so a sprite sheet can go straight to the display. Frame count comes from the sheet's width, so adding poses needs no flags. Requires Python with Pillow.

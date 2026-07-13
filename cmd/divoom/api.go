@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -8,7 +9,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	divoom "github.com/thedaneeffect/go-divoom"
@@ -36,6 +40,7 @@ func newServer(cfg Config, dialer func(Config) (divoom.Transport, error)) *serve
 	s.mux.HandleFunc("POST /api/light", s.handleLight)
 	s.mux.HandleFunc("POST /api/clock", s.handleClock)
 	s.mux.HandleFunc("POST /api/time", s.handleTime)
+	s.mux.HandleFunc("POST /api/disconnect", s.handleDisconnect)
 	s.mux.HandleFunc("POST /api/text", s.handleText)
 	s.mux.HandleFunc("POST /api/image", s.handleImage)
 	return s
@@ -74,8 +79,31 @@ func serve(cfg Config, stdout io.Writer) error {
 		}
 	}()
 
+	// Release the device on Ctrl-C / SIGTERM. This is not politeness: the
+	// process holds the device's only RFCOMM channel, and dying without closing
+	// it strands the baseband link, after which *every* subsequent connect —
+	// from this tool, the phone app, anything — fails until the link is cleared
+	// by hand or the device is power-cycled (hardware-smoke.md).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	httpSrv := &http.Server{Addr: cfg.ListenAddr, Handler: srv}
+	errc := make(chan error, 1)
+	go func() { errc <- httpSrv.ListenAndServe() }()
+
 	log.Printf("go-divoom daemon listening on %s", cfg.ListenAddr)
-	return http.ListenAndServe(cfg.ListenAddr, srv)
+	select {
+	case err := <-errc:
+		srv.releaseDevice()
+		return err
+	case <-ctx.Done():
+		log.Printf("go-divoom: shutting down, releasing the device")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		httpSrv.Shutdown(shutdownCtx)
+		srv.releaseDevice()
+		return nil
+	}
 }
 
 // describeDevice summarizes the configured transport and device address for
@@ -118,6 +146,19 @@ func (s *server) device() (*divoom.Device, error) {
 	return s.dev, nil
 }
 
+// releaseDevice closes the device connection and forgets it, freeing the
+// device's single RFCOMM channel for someone else — the phone app, another
+// host, whoever. The daemon keeps running: the next command simply redials.
+// Idempotent, so releasing when nothing is connected is fine.
+func (s *server) releaseDevice() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dev != nil {
+		s.dev.Close()
+		s.dev = nil
+	}
+}
+
 // dropDevice closes and forgets the connection so the next call redials.
 // It only clears s.dev if it still holds d, so a stale request's error path
 // cannot tear down a newer connection dialed by a concurrent request.
@@ -142,6 +183,14 @@ func (s *server) withDevice(w http.ResponseWriter, fn func(*divoom.Device) error
 		jsonError(w, http.StatusBadGateway, err)
 		return
 	}
+	jsonOK(w)
+}
+
+// handleDisconnect releases the device without stopping the daemon, so the
+// device can be handed to something else that needs its single RFCOMM channel.
+// The next command through this daemon will redial.
+func (s *server) handleDisconnect(w http.ResponseWriter, r *http.Request) {
+	s.releaseDevice()
 	jsonOK(w)
 }
 

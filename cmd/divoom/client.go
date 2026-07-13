@@ -113,6 +113,12 @@ func daemonPostJSON(baseURL, path string, body any) error {
 	return daemonResult(resp)
 }
 
+// daemonDisconnect posts to POST /api/disconnect (see handleDisconnect): the
+// daemon releases the device's single RFCOMM channel but keeps running.
+func daemonDisconnect(baseURL string) error {
+	return daemonPostJSON(baseURL, "/api/disconnect", map[string]any{})
+}
+
 // daemonBrightness posts to POST /api/brightness (see handleBrightness).
 func daemonBrightness(baseURL string, value int) error {
 	return daemonPostJSON(baseURL, "/api/brightness", map[string]any{"value": value})

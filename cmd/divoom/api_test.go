@@ -395,3 +395,59 @@ func TestTextEndpointInvalidFontIs400(t *testing.T) {
 		t.Errorf("transport received %d bytes, want 0 (device must never be touched for a font validation failure)", fc.Len())
 	}
 }
+
+// TestDisconnectReleasesDevice covers the handoff case: the device accepts one
+// connection at a time, so the daemon must be able to let go of it without
+// stopping — otherwise the only way to hand the device to the phone app (or
+// anyone else) is to kill the daemon.
+func TestDisconnectReleasesDevice(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// A fresh transport per dial, like the real dialer: newTestServer's shared
+	// fakeConn answers exactly one ping, so it cannot model a reconnect.
+	var dials int
+	srv := newServer(defaultConfig(), func(Config) (divoom.Transport, error) {
+		dials++
+		return &fakeConn{}, nil
+	})
+
+	// Connect by issuing any device command.
+	req := httptest.NewRequest("POST", "/api/brightness", bytes.NewBufferString(`{"value":50}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("brightness: status %d", w.Code)
+	}
+	if srv.dev == nil {
+		t.Fatal("expected a connected device after a command")
+	}
+
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, httptest.NewRequest("POST", "/api/disconnect", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("disconnect: status %d: %s", w.Code, w.Body)
+	}
+	if srv.dev != nil {
+		t.Error("device still held after disconnect — it is not free for anyone else")
+	}
+
+	// Releasing twice must not panic or error: the caller doesn't have to know
+	// whether anything was connected.
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, httptest.NewRequest("POST", "/api/disconnect", nil))
+	if w.Code != http.StatusOK {
+		t.Errorf("second disconnect: status %d, want 200 (idempotent)", w.Code)
+	}
+
+	// And the daemon still works: the next command redials.
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, httptest.NewRequest("POST", "/api/brightness", bytes.NewBufferString(`{"value":60}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("command after disconnect: status %d, want the daemon to redial", w.Code)
+	}
+	if srv.dev == nil {
+		t.Error("daemon did not reconnect on the next command")
+	}
+	if dials != 2 {
+		t.Errorf("dialed %d times, want 2 (initial + redial after release)", dials)
+	}
+}
