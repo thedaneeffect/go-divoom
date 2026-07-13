@@ -36,11 +36,21 @@ const daemonRequestTimeout = 30 * time.Second
 // (distinct from the short-timeout client daemonAvailable uses to probe).
 var daemonClient = &http.Client{Timeout: daemonRequestTimeout}
 
+// daemonState is what a probe learns about a local daemon. The two fields
+// are independent: a daemon that is up does not necessarily hold the
+// device, since `divoom disconnect` releases it while the daemon keeps
+// running. Callers that care about contention for the device's single
+// RFCOMM channel must consult holdsDevice, not up.
+type daemonState struct {
+	up          bool // a daemon answered its status endpoint
+	holdsDevice bool // ...and it currently holds the device's connection
+}
+
 // probeDaemon is the seam routeCommand (main.go) uses to decide whether a
-// local daemon is reachable. It defaults to daemonAvailable; tests
-// substitute a fake so routing logic can be exercised without a real HTTP
-// listener.
-var probeDaemon = daemonAvailable
+// local daemon is reachable and whether it holds the device. It defaults
+// to daemonProbe; tests substitute a fake so routing logic can be
+// exercised without a real HTTP listener.
+var probeDaemon = daemonProbe
 
 // daemonBaseURL turns a configured listen address (e.g. ":8377" or
 // "0.0.0.0:8377") into a URL for reaching that daemon from this same
@@ -56,24 +66,43 @@ func daemonBaseURL(listenAddr string) string {
 	return "http://127.0.0.1:" + port
 }
 
-// daemonAvailable reports whether a `divoom serve` daemon is listening at
-// cfg's configured address, via a short-timeout GET of its own status
-// endpoint. It must never block noticeably: every one-shot command calls
-// this to decide whether to route through the daemon or dial directly, so
-// a slow probe would defeat the entire point of routing.
-func daemonAvailable(cfg Config) bool {
+// daemonStatusBody is the shape handleStatus (api.go) writes. Only
+// "connected" is read back: it is what tells a one-shot command whether
+// the daemon is currently holding the device's single RFCOMM channel.
+type daemonStatusBody struct {
+	Connected bool `json:"connected"`
+}
+
+// daemonProbe reports whether a `divoom serve` daemon is listening at cfg's
+// configured address and whether it currently holds the device, via a
+// short-timeout GET of its own status endpoint. It must never block
+// noticeably: every one-shot command calls this to decide whether to route
+// through the daemon or dial directly, so a slow probe would defeat the
+// entire point of routing.
+//
+// A daemon that answers but whose body cannot be decoded is reported as up
+// but not holding the device. That is the safe direction to fail for
+// routing (commands still route through it), and the only caller that acts
+// on holdsDevice — the -direct guard in routeCommand — is deciding whether
+// to *refuse*, so a garbled status must not manufacture a refusal.
+func daemonProbe(cfg Config) daemonState {
 	req, err := http.NewRequest(http.MethodGet, daemonBaseURL(cfg.ListenAddr)+"/api/status", nil)
 	if err != nil {
-		return false
+		return daemonState{}
 	}
 	client := &http.Client{Timeout: daemonProbeTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false
+		return daemonState{}
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, resp.Body)
+		return daemonState{}
+	}
+	var body daemonStatusBody
+	json.NewDecoder(resp.Body).Decode(&body)
+	return daemonState{up: true, holdsDevice: body.Connected}
 }
 
 // daemonErrorBody mirrors the {"error": "..."} shape jsonError writes in

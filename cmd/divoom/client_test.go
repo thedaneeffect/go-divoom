@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -33,9 +34,9 @@ func TestDaemonBaseURL(t *testing.T) {
 	}
 }
 
-// --- daemonAvailable -----------------------------------------------------
+// --- daemonProbe -----------------------------------------------------
 
-func TestDaemonAvailableTrue(t *testing.T) {
+func TestDaemonProbeUp(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -46,16 +47,43 @@ func TestDaemonAvailableTrue(t *testing.T) {
 
 	cfg := defaultConfig()
 	cfg.ListenAddr = srv.Listener.Addr().String()
-	if !daemonAvailable(cfg) {
-		t.Error("daemonAvailable() = false, want true against a live /api/status")
+	if !daemonProbe(cfg).up {
+		t.Error("daemonProbe().up = false, want true against a live /api/status")
 	}
 }
 
-// TestDaemonAvailableFalseClosedPort asserts a plain "nothing is listening"
+// TestDaemonProbeReadsConnected asserts the probe reports what the daemon says
+// about the device, not merely that it answered. The -direct guard keys on this
+// field: reporting holdsDevice=false for a daemon that holds the device would
+// let a second RFCOMM dial through and wedge the hardware.
+func TestDaemonProbeReadsConnected(t *testing.T) {
+	for _, connected := range []bool{true, false} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"connected":%t,"profile":"Pixoo Max","transport":"rfcomm"}`, connected)
+		})
+		srv := httptest.NewServer(mux)
+
+		cfg := defaultConfig()
+		cfg.ListenAddr = srv.Listener.Addr().String()
+		got := daemonProbe(cfg)
+		srv.Close()
+
+		if !got.up {
+			t.Errorf(`daemonProbe().up = false against a live /api/status (connected=%t)`, connected)
+		}
+		if got.holdsDevice != connected {
+			t.Errorf("daemonProbe().holdsDevice = %t, want %t", got.holdsDevice, connected)
+		}
+	}
+}
+
+// TestDaemonProbeDownClosedPort asserts a plain "nothing is listening"
 // address (the common case: no daemon running) comes back false quickly —
 // this is the case every one-shot command hits when there's no `divoom
 // serve` around, so it must never add noticeable latency.
-func TestDaemonAvailableFalseClosedPort(t *testing.T) {
+func TestDaemonProbeDownClosedPort(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -67,21 +95,21 @@ func TestDaemonAvailableFalseClosedPort(t *testing.T) {
 	cfg.ListenAddr = addr
 
 	start := time.Now()
-	got := daemonAvailable(cfg)
+	got := daemonProbe(cfg).up
 	elapsed := time.Since(start)
 
 	if got {
-		t.Error("daemonAvailable() = true, want false for a closed port")
+		t.Error("daemonProbe().up = true, want false for a closed port")
 	}
 	if elapsed > time.Second {
-		t.Errorf("daemonAvailable() took %s against a closed port, want near-instant", elapsed)
+		t.Errorf("daemonProbe().up took %s against a closed port, want near-instant", elapsed)
 	}
 }
 
-// TestDaemonAvailableFalseUnresponsive asserts daemonAvailable does not hang
+// TestDaemonProbeDownUnresponsive asserts daemonProbe does not hang
 // when a listener accepts the connection but never answers: the probe's own
 // timeout, not a network-level reset, must be what ends the call.
-func TestDaemonAvailableFalseUnresponsive(t *testing.T) {
+func TestDaemonProbeDownUnresponsive(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -116,14 +144,14 @@ func TestDaemonAvailableFalseUnresponsive(t *testing.T) {
 	cfg.ListenAddr = ln.Addr().String()
 
 	start := time.Now()
-	got := daemonAvailable(cfg)
+	got := daemonProbe(cfg).up
 	elapsed := time.Since(start)
 
 	if got {
-		t.Error("daemonAvailable() = true, want false against a silent listener")
+		t.Error("daemonProbe().up = true, want false against a silent listener")
 	}
 	if elapsed > 2*time.Second {
-		t.Errorf("daemonAvailable() took %s, want well under 2s (probe timeout is %s)", elapsed, daemonProbeTimeout)
+		t.Errorf("daemonProbe().up took %s, want well under 2s (probe timeout is %s)", elapsed, daemonProbeTimeout)
 	}
 }
 
@@ -386,11 +414,20 @@ func TestDaemonSendImageGifContentType(t *testing.T) {
 // --- routing logic -----------------------------------------------------
 
 // fakeProbe swaps probeDaemon for a fixed answer, restoring the original
-// on cleanup.
+// on cleanup. A daemon that is up is assumed to hold the device, which is
+// the steady state; fakeProbeState covers the released-but-running case.
 func fakeProbe(t *testing.T, up bool) {
 	t.Helper()
+	fakeProbeState(t, daemonState{up: up, holdsDevice: up})
+}
+
+// fakeProbeState swaps probeDaemon for an exact state, so routing can be
+// exercised against a daemon that is running but holds no device — what
+// `divoom disconnect` leaves behind.
+func fakeProbeState(t *testing.T, state daemonState) {
+	t.Helper()
 	orig := probeDaemon
-	probeDaemon = func(Config) bool { return up }
+	probeDaemon = func(Config) daemonState { return state }
 	t.Cleanup(func() { probeDaemon = orig })
 }
 
@@ -474,12 +511,12 @@ func TestRouteCommandDirectFlagDialsWhenDaemonDown(t *testing.T) {
 	}
 }
 
-// TestRouteCommandDirectFlagRefusedWhileDaemonUp guards a hardware hazard: the
-// device accepts one RFCOMM channel at a time, and dialing a second one while
-// the daemon holds the first wedges its Bluetooth stack until it is power-cycled
-// (observed on real hardware, IOReturn 0xe00002d6). -direct must therefore be
-// refused, not honored, while the daemon is reachable.
-func TestRouteCommandDirectFlagRefusedWhileDaemonUp(t *testing.T) {
+// TestRouteCommandDirectFlagRefusedWhileDaemonHoldsDevice guards a hardware
+// hazard: the device accepts one RFCOMM channel at a time, and dialing a second
+// one while the daemon holds the first wedges its Bluetooth stack until it is
+// power-cycled (observed on real hardware, IOReturn 0xe00002d6). -direct must
+// therefore be refused, not honored, while the daemon holds the device.
+func TestRouteCommandDirectFlagRefusedWhileDaemonHoldsDevice(t *testing.T) {
 	fakeProbe(t, true)
 	fakeDial(t, nil) // dialing at all would be the bug
 
@@ -491,10 +528,56 @@ func TestRouteCommandDirectFlagRefusedWhileDaemonUp(t *testing.T) {
 		},
 	)
 	if err == nil {
-		t.Fatal("want an error refusing -direct while the daemon is up, got nil")
+		t.Fatal("want an error refusing -direct while the daemon holds the device, got nil")
 	}
 	if !strings.Contains(err.Error(), "daemon is running") {
 		t.Errorf("error should explain the daemon holds the connection, got: %v", err)
+	}
+}
+
+// TestRouteCommandDirectFlagHonoredWhenDaemonReleasedDevice asserts the -direct
+// guard keys on the device being *held*, not on the daemon merely being up.
+// `divoom disconnect` leaves the daemon running with no connection, and until it
+// redials there is no second channel to contend with — so refusing here would
+// block a dial that is provably safe (verified on hardware: after a release, a
+// direct dial connects and drives the panel).
+func TestRouteCommandDirectFlagHonoredWhenDaemonReleasedDevice(t *testing.T) {
+	fakeProbeState(t, daemonState{up: true, holdsDevice: false})
+	fakeDial(t, &alwaysRespondingConn{})
+
+	var directCalled bool
+	err := routeCommand(defaultConfig(), cliFlags{direct: true},
+		func(baseURL string) error {
+			t.Fatal("daemon fn called, want direct path: -direct was passed")
+			return nil
+		},
+		func(d *divoom.Device) error { directCalled = true; return nil },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !directCalled {
+		t.Error("direct dial was refused even though the daemon holds no connection")
+	}
+}
+
+// TestRouteCommandUsesDaemonWhenReleasedAndNoDirectFlag asserts a released
+// daemon still gets the command when -direct is absent: it redials on demand,
+// which is cheaper and safer than every one-shot command dialing its own channel.
+func TestRouteCommandUsesDaemonWhenReleasedAndNoDirectFlag(t *testing.T) {
+	fakeProbeState(t, daemonState{up: true, holdsDevice: false})
+	fakeDial(t, nil) // dialFunc must not be called on this path
+
+	var daemonCalled bool
+	err := routeCommand(defaultConfig(), cliFlags{},
+		func(baseURL string) error { daemonCalled = true; return nil },
+		func(d *divoom.Device) error { t.Fatal("direct fn called, want daemon path only"); return nil },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !daemonCalled {
+		t.Error("daemon-routed function was not called")
 	}
 }
 

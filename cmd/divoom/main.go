@@ -198,8 +198,13 @@ func cmdText(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer
 // Without a daemon there is nothing to release: one-shot commands close their
 // connection as they exit, so say so rather than pretending to do work.
 func cmdDisconnect(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
-	if !probeDaemon(cfg) {
+	state := probeDaemon(cfg)
+	if !state.up {
 		fmt.Fprintln(stdout, "no daemon running; the device is already free")
+		return nil
+	}
+	if !state.holdsDevice {
+		fmt.Fprintln(stdout, "the daemon is running but holds no connection; the device is already free")
 		return nil
 	}
 	if err := daemonDisconnect(daemonBaseURL(cfg.ListenAddr)); err != nil {
@@ -336,16 +341,25 @@ func cmdLight(cfg Config, flags cliFlags, args []string, stdout, stderr io.Write
 // daemon already holds the device's only connection and a concurrent
 // direct dial would contend with it.
 func routeCommand(cfg Config, flags cliFlags, viaDaemon func(baseURL string) error, direct func(*divoom.Device) error) error {
-	if probeDaemon(cfg) {
-		// The device accepts exactly one RFCOMM channel at a time, and dialing a
-		// second one while the daemon holds the first doesn't just fail — it wedges
-		// the device's Bluetooth stack until it is power-cycled. So -direct is
-		// refused rather than honored while the daemon is up.
-		if flags.direct {
-			return fmt.Errorf("the daemon is running and holds the device's only connection; " +
-				"stop it (or omit -direct) — dialing directly alongside it wedges the device")
-		}
+	state := probeDaemon(cfg)
+	if state.up && !flags.direct {
 		return viaDaemon(daemonBaseURL(cfg.ListenAddr))
+	}
+	// The device accepts exactly one RFCOMM channel at a time, and dialing a
+	// second one while the daemon holds the first doesn't just fail — it wedges
+	// the device's Bluetooth stack until it is power-cycled. So -direct is
+	// refused while the daemon actually holds the device.
+	//
+	// A running daemon does not imply a held device: `divoom disconnect`
+	// releases the channel while the daemon keeps running, and until it redials
+	// there is nothing to contend with, so -direct is honored. The residual race
+	// — the daemon redialing between this probe and the dial below — is the same
+	// one the routing probe has always carried, and losing it costs a failed dial
+	// rather than a wedged device, since the daemon's own connection is intact.
+	if state.holdsDevice {
+		return fmt.Errorf("the daemon is running and holds the device's only connection; " +
+			"run `divoom disconnect` to release it, or stop the daemon (or omit -direct) — " +
+			"dialing directly alongside it wedges the device")
 	}
 	return withDevice(cfg, direct)
 }
