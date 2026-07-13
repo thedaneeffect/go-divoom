@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
@@ -25,7 +26,7 @@ func testFontPath(t *testing.T) string {
 }
 
 func TestRenderTextFrames(t *testing.T) {
-	frames := renderTextFrames("HI", 32, basicfont.Face7x13, [3]uint8{255, 255, 255}, [3]uint8{0, 0, 0})
+	frames, _ := renderTextFrames("HI", 32, basicfont.Face7x13, [3]uint8{255, 255, 255}, [3]uint8{0, 0, 0})
 	if len(frames) < 2 {
 		t.Fatalf("got %d frames, want at least 2 (scroll)", len(frames))
 	}
@@ -46,7 +47,7 @@ func TestRenderTextFrames(t *testing.T) {
 }
 
 func TestRenderTextFramesLongTextCapped(t *testing.T) {
-	frames := renderTextFrames("THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG", 32, basicfont.Face7x13, [3]uint8{255, 0, 0}, [3]uint8{0, 0, 0})
+	frames, _ := renderTextFrames("THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG", 32, basicfont.Face7x13, [3]uint8{255, 0, 0}, [3]uint8{0, 0, 0})
 	if len(frames) > maxAnimationFrames {
 		t.Fatalf("got %d frames, want <= %d (the frame budget)", len(frames), maxAnimationFrames)
 	}
@@ -71,7 +72,7 @@ func TestShowTextSendsAnimation(t *testing.T) {
 // must contain no text pixels at all, i.e. the message has fully left the screen.
 func TestRenderTextFramesScrollsFully(t *testing.T) {
 	for _, msg := range []string{"HI", "Hello, world", "a much longer message that must still finish"} {
-		frames := renderTextFrames(msg, 32, basicfont.Face7x13, [3]uint8{255, 255, 255}, [3]uint8{0, 0, 0})
+		frames, _ := renderTextFrames(msg, 32, basicfont.Face7x13, [3]uint8{255, 255, 255}, [3]uint8{0, 0, 0})
 		if len(frames) > maxAnimationFrames {
 			t.Errorf("%q: %d frames exceeds the device's %d-frame buffer", msg, len(frames), maxAnimationFrames)
 		}
@@ -194,7 +195,7 @@ func TestRenderTextFramesTTFThresholdsToTwoColors(t *testing.T) {
 
 	fg := [3]uint8{255, 255, 255}
 	bg := [3]uint8{0, 0, 0}
-	frames := renderTextFrames("Hello, world", 32, face, fg, bg)
+	frames, _ := renderTextFrames("Hello, world", 32, face, fg, bg)
 	if len(frames) == 0 {
 		t.Fatal("no frames rendered")
 	}
@@ -217,7 +218,7 @@ func TestRenderTextFramesLargeFontStillFitsBudget(t *testing.T) {
 	}
 	defer face.Close()
 
-	frames := renderTextFrames("THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG", 32, face, [3]uint8{255, 255, 255}, [3]uint8{0, 0, 0})
+	frames, _ := renderTextFrames("THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG", 32, face, [3]uint8{255, 255, 255}, [3]uint8{0, 0, 0})
 	if len(frames) > maxAnimationFrames {
 		t.Errorf("got %d frames, want <= %d (device frame limit)", len(frames), maxAnimationFrames)
 	}
@@ -253,5 +254,38 @@ func TestLoadFaceDefaultSize(t *testing.T) {
 	defer face.Close()
 	if adv := font.MeasureString(face, "M"); adv <= 0 {
 		t.Errorf("advance for size-0 (default) face = %v, want > 0", adv)
+	}
+}
+
+// TestFrameTimeFor covers the three ways the scroll pace gets set: a Duration
+// is spread across however many frames the message needs (so the message takes
+// that long regardless of length), an explicit FrameTime is honored as-is, and
+// the default derives a per-frame hold from the scroll rate and step.
+func TestFrameTimeFor(t *testing.T) {
+	// Duration is divided across the frames.
+	if got := frameTimeFor(TextOptions{Duration: 3 * time.Second}, 120, 1); got != 25*time.Millisecond {
+		t.Errorf("3s across 120 frames = %v, want 25ms", got)
+	}
+	// Same duration, half the frames: each frame holds twice as long, so the
+	// message still takes 3s end to end.
+	if got := frameTimeFor(TextOptions{Duration: 3 * time.Second}, 60, 1); got != 50*time.Millisecond {
+		t.Errorf("3s across 60 frames = %v, want 50ms", got)
+	}
+	// Explicit FrameTime wins over the default.
+	if got := frameTimeFor(TextOptions{FrameTime: 80 * time.Millisecond}, 120, 1); got != 80*time.Millisecond {
+		t.Errorf("explicit frame time = %v, want 80ms", got)
+	}
+	// Duration takes precedence over FrameTime when both are set.
+	if got := frameTimeFor(TextOptions{Duration: 2 * time.Second, FrameTime: time.Second}, 100, 1); got != 20*time.Millisecond {
+		t.Errorf("duration should win over frame time, got %v, want 20ms", got)
+	}
+	// Default: a 1px step at defaultScrollRate px/sec.
+	want := time.Duration(float64(time.Second) / defaultScrollRate)
+	if got := frameTimeFor(TextOptions{}, 100, 1); got != want {
+		t.Errorf("default frame time = %v, want %v", got, want)
+	}
+	// An absurdly short duration is floored rather than scrolling instantly.
+	if got := frameTimeFor(TextOptions{Duration: time.Millisecond}, 240, 1); got != minFrameTime {
+		t.Errorf("tiny duration = %v, want the %v floor", got, minFrameTime)
 	}
 }

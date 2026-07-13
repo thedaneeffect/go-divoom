@@ -142,7 +142,7 @@ func cmdSend(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer
 
 // textUsage is cmdText's own usage string, shown both by its local flag.FlagSet
 // (on a parse error or -h) and when no message text is given.
-const textUsage = "usage: divoom text [-font <path>] [-size <points>] <message>"
+const textUsage = "usage: divoom text [-font <path>] [-size <points>] [-duration <3s>|-speed <px/sec>] <message>"
 
 // cmdText parses its own -font/-size flags with a per-command FlagSet: unlike
 // every other command, text takes optional flags in addition to its
@@ -155,6 +155,8 @@ func cmdText(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer
 	fs.Usage = func() { fmt.Fprintln(stderr, textUsage) }
 	fontPath := fs.String("font", "", "path to a TTF/OTF font file (resolved on the machine that renders the frames)")
 	fontSize := fs.Float64("size", 0, "font point size (default 16); ignored without -font")
+	duration := fs.Duration("duration", 0, "how long one pass takes, e.g. 3s (message-length independent)")
+	speed := fs.Float64("speed", 0, "scroll speed in pixels per second (default 40); ignored with -duration")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -163,8 +165,26 @@ func cmdText(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer
 	if len(rest) < 1 {
 		return fmt.Errorf("%s", textUsage)
 	}
+	if *duration > 0 && *speed > 0 {
+		return fmt.Errorf("-duration and -speed both set the pace; use one or the other")
+	}
+	if *speed < 0 {
+		return fmt.Errorf("-speed must be positive, got %g", *speed)
+	}
 	text := strings.Join(rest, " ")
-	opts := divoom.TextOptions{FontPath: *fontPath, FontSize: *fontSize}
+	opts := divoom.TextOptions{
+		FontPath: *fontPath,
+		FontSize: *fontSize,
+		Duration: *duration,
+	}
+	// -speed is px/sec, which the library expresses as a per-frame hold time.
+	// The scroll step is 1px for any message short enough to fit the frame
+	// budget, so this conversion is exact in practice; a message long enough to
+	// force a wider step scrolls proportionally faster, which is the same
+	// tradeoff the default rate makes.
+	if *speed > 0 {
+		opts.FrameTime = time.Duration(float64(time.Second) / *speed)
+	}
 	return routeCommand(cfg, flags,
 		func(baseURL string) error { return daemonText(baseURL, text, opts) },
 		func(d *divoom.Device) error { return d.ShowText(text, opts) },

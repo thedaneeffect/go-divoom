@@ -15,11 +15,22 @@ import (
 )
 
 // TextOptions configures ShowText. Zero values mean white text, black
-// background, 100ms per frame, and the built-in bitmap font.
+// background, the default scroll rate, and the built-in bitmap font.
 type TextOptions struct {
 	Color      [3]uint8
 	Background [3]uint8
-	FrameTime  time.Duration
+
+	// Duration, if set, is how long one pass of the message takes end to end.
+	// The per-frame time is derived from it, so the message takes the same time
+	// to cross whether it's two words or twenty — which is usually what you
+	// actually want to control. Takes precedence over FrameTime.
+	Duration time.Duration
+
+	// FrameTime is the time each frame holds, i.e. the time per scroll step.
+	// It fixes the *rate* rather than the total, so longer messages take
+	// proportionally longer. Ignored when Duration is set; zero means the
+	// default rate (defaultScrollRate).
+	FrameTime time.Duration
 
 	// FontPath, if set, is a TTF/OTF file loaded and rendered instead of the
 	// built-in bitmap font (basicfont.Face7x13). It is resolved on whichever
@@ -36,11 +47,33 @@ type TextOptions struct {
 	FontSize float64
 }
 
-// defaultTextFrameTime sets the scroll pace: one pixel every 62ms is ~16px/sec,
-// a bit over two characters per second, which reads briskly without blurring.
-// A 1px step is what makes this speed legible — the same rate at the 2px step
-// this code used to take reads as a judder.
-const defaultTextFrameTime = 62 * time.Millisecond
+// defaultScrollRate is the default scroll speed in pixels per second — about
+// five characters a second at the usual glyph widths, which reads briskly. The
+// 1px scroll step is what keeps this legible rather than juddery.
+const defaultScrollRate = 40
+
+// minFrameTime floors the derived per-frame time. The device stores each frame's
+// hold time as milliseconds, so anything under a few of them is meaningless, and
+// a very short Duration on a long message would otherwise ask for a frame time
+// of zero and scroll instantly.
+const minFrameTime = 10 * time.Millisecond
+
+// frameTimeFor resolves the per-frame hold time from the options and the number
+// of frames the message actually needs: an explicit Duration is divided across
+// the frames, an explicit FrameTime is used as-is, and otherwise the default
+// rate sets the pace for the given scroll step.
+func frameTimeFor(o TextOptions, frames, step int) time.Duration {
+	var ft time.Duration
+	switch {
+	case o.Duration > 0:
+		ft = o.Duration / time.Duration(max(frames, 1))
+	case o.FrameTime > 0:
+		ft = o.FrameTime
+	default:
+		ft = time.Duration(float64(step) / defaultScrollRate * float64(time.Second))
+	}
+	return max(ft, minFrameTime)
+}
 
 // defaultFontSize is used when FontSize is zero. 16pt at fontDPI (72 — see
 // below) renders glyphs with roughly a 16px em box: comfortably close to half
@@ -112,9 +145,6 @@ func (d *Device) ShowText(text string, o TextOptions) error {
 	if o.Color == [3]uint8{} {
 		o.Color = [3]uint8{255, 255, 255}
 	}
-	if o.FrameTime == 0 {
-		o.FrameTime = defaultTextFrameTime
-	}
 
 	face := font.Face(basicfont.Face7x13)
 	if o.FontPath != "" {
@@ -126,8 +156,11 @@ func (d *Device) ShowText(text string, o TextOptions) error {
 		face = loaded
 	}
 
-	frames := renderTextFrames(text, d.p.ScreenSize, face, o.Color, o.Background)
-	return d.SendAnimation(frames, o.FrameTime)
+	// The frame time can only be resolved once the message has been laid out:
+	// a Duration must be divided across however many frames it actually needs,
+	// and the default rate depends on the scroll step the frame budget allows.
+	frames, step := renderTextFrames(text, d.p.ScreenSize, face, o.Color, o.Background)
+	return d.SendAnimation(frames, frameTimeFor(o, len(frames), step))
 }
 
 // maxAnimationFrames bounds how many frames one scrolling message uses.
@@ -155,7 +188,7 @@ func scrollFrames(width, size, speed int) int {
 
 // renderTextFrames renders text into scroll animation frames of size x size,
 // drawing glyphs with face.
-func renderTextFrames(text string, size int, face font.Face, fg, bg [3]uint8) []image.Image {
+func renderTextFrames(text string, size int, face font.Face, fg, bg [3]uint8) (frames []image.Image, step int) {
 	textWidth := font.MeasureString(face, text).Ceil()
 
 	// Canvas: blank screen, text, blank screen.
@@ -179,13 +212,13 @@ func renderTextFrames(text string, size int, face font.Face, fg, bg [3]uint8) []
 	// clipping its final pixels: floor division here left the tail of the
 	// message cut off mid-character.
 	count := max(scrollFrames(width, size, speed), 1)
-	frames := make([]image.Image, 0, count)
-	for i := 0; i < count; i++ {
+	frames = make([]image.Image, 0, count)
+	for i := range count {
 		f := image.NewRGBA(image.Rect(0, 0, size, size))
 		draw.Draw(f, f.Bounds(), canvas, image.Pt(i*speed, 0), draw.Src)
 		frames = append(frames, f)
 	}
-	return frames
+	return frames, speed
 }
 
 // alphaThreshold is the coverage cutoff drawTextThresholded uses to decide a

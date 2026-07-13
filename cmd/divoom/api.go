@@ -349,9 +349,11 @@ func (s *server) handleClock(w http.ResponseWriter, r *http.Request) {
 // perfectly healthy Bluetooth link for no reason (see divoom.ValidateFont).
 func (s *server) handleText(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Text string  `json:"text"`
-		Font string  `json:"font"`
-		Size float64 `json:"size"`
+		Text        string  `json:"text"`
+		Font        string  `json:"font"`
+		Size        float64 `json:"size"`
+		DurationMs  int64   `json:"durationMs"`
+		FrameTimeMs int64   `json:"frameTimeMs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, err)
@@ -361,12 +363,25 @@ func (s *server) handleText(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, fmt.Errorf("text is required"))
 		return
 	}
+	if req.DurationMs < 0 || req.FrameTimeMs < 0 {
+		jsonError(w, http.StatusBadRequest, fmt.Errorf("durationMs and frameTimeMs must not be negative"))
+		return
+	}
+	// Validate the font before touching the device: a bad path is a client
+	// mistake, and withDevice treats any error from inside as a transport fault
+	// worth dropping the connection over.
 	if err := divoom.ValidateFont(req.Font, req.Size); err != nil {
 		jsonError(w, http.StatusBadRequest, err)
 		return
 	}
+	opts := divoom.TextOptions{
+		FontPath:  req.Font,
+		FontSize:  req.Size,
+		Duration:  time.Duration(req.DurationMs) * time.Millisecond,
+		FrameTime: time.Duration(req.FrameTimeMs) * time.Millisecond,
+	}
 	s.withDevice(w, func(d *divoom.Device) error {
-		return d.ShowText(req.Text, divoom.TextOptions{FontPath: req.Font, FontSize: req.Size})
+		return d.ShowText(req.Text, opts)
 	})
 }
 

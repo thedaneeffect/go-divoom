@@ -154,6 +154,15 @@ func daemonText(baseURL, text string, o divoom.TextOptions) error {
 	if o.FontSize != 0 {
 		body["size"] = o.FontSize
 	}
+	// Durations cross the wire as milliseconds: the daemon may be a different
+	// build than this CLI, and an integer of milliseconds is unambiguous where a
+	// Go duration string ("3s") would tie the API to one language's formatting.
+	if o.Duration > 0 {
+		body["durationMs"] = o.Duration.Milliseconds()
+	}
+	if o.FrameTime > 0 {
+		body["frameTimeMs"] = o.FrameTime.Milliseconds()
+	}
 	return daemonPostJSON(baseURL, "/api/text", body)
 }
 

@@ -73,13 +73,16 @@ var commands = []command{
 	},
 	{
 		name:  "text",
-		args:  "[-font <path>] [-size <points>] <message>",
+		args:  "[-font <path>] [-size <points>] [-duration|-speed] <message>",
 		short: "scroll a text message across the display",
 		long: "Scrolls a text message across the display. Arguments after the command (and any flags) are joined with spaces, so quoting is only needed to control word spacing.\n\n" +
+			"-duration sets how long one pass takes end to end (e.g. 3s), so a message takes the same time to cross whether it's two words or twenty. -speed instead fixes the rate in pixels per second (default 40), so longer messages take proportionally longer. They set the same thing two ways, so pass only one.\n\n" +
 			"-font loads a TTF/OTF file instead of the built-in bitmap font. -size sets its point size (default 16, which fills the 32px display well). Glyphs are always thresholded to two colors (foreground/background) before upload, never antialiased grays, so frames stay small regardless of which font is loaded.\n\n" +
 			"When this command routes through `divoom serve` (the common, and default, case once the daemon is running), -font names a path on the daemon's machine, not necessarily wherever this CLI invocation itself runs.",
 		examples: []string{
 			`divoom text "hello world"`,
+			`divoom text -duration 3s "hello world"`,
+			`divoom text -speed 60 "hello world"`,
 			`divoom text -font /path/to/font.ttf -size 16 "hello world"`,
 		},
 		run: cmdText,
