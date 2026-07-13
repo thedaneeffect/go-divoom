@@ -36,13 +36,11 @@ type TextOptions struct {
 	FontSize float64
 }
 
-// defaultTextFrameTime sets the scroll pace. The step size is not ours to
-// choose for longer messages — the device's 60-frame buffer forces wider steps
-// as text grows — so frame time is the only lever on readability. At 250ms a
-// typical message crosses the screen at ~8px/sec, roughly a character per
-// second. The reference implementation's 50ms is five times faster and reads as
-// a blur.
-const defaultTextFrameTime = 250 * time.Millisecond
+// defaultTextFrameTime sets the scroll pace: one pixel every 62ms is ~16px/sec,
+// a bit over two characters per second, which reads briskly without blurring.
+// A 1px step is what makes this speed legible — the same rate at the 2px step
+// this code used to take reads as a judder.
+const defaultTextFrameTime = 62 * time.Millisecond
 
 // defaultFontSize is used when FontSize is zero. 16pt at fontDPI (72 — see
 // below) renders glyphs with roughly a 16px em box: comfortably close to half
@@ -132,9 +130,20 @@ func (d *Device) ShowText(text string, o TextOptions) error {
 	return d.SendAnimation(frames, o.FrameTime)
 }
 
-// maxAnimationFrames is how many frames the device will store for one
-// animation. Uploads longer than this play back truncated.
-const maxAnimationFrames = 60
+// maxAnimationFrames bounds how many frames one scrolling message uses.
+//
+// It is NOT a device limit. The reference implementation warns that animations
+// over 60 frames are "very likely cut off", and this code inherited that number
+// on faith. Measured on real hardware (a counter animation whose frames display
+// their own index, so truncation is directly observable): with paced writes the
+// device plays back 240 frames / ~34KB intact — every truncation previously
+// blamed on a frame cap was actually the receive-buffer overrun that chunkPacing
+// now prevents. See docs/superpowers/specs/hardware-smoke.md.
+//
+// So this is a budget, not a ceiling: it caps upload time (each frame is a
+// paced write) and keeps the scroll step at 1px for any sane message length.
+// Longer messages step wider rather than taking forever to upload.
+const maxAnimationFrames = 240
 
 // scrollFrames is how many frames it takes to walk the text fully off the
 // screen at the given step. Frames run 0..count-1, so the last one sits at
@@ -160,8 +169,7 @@ func renderTextFrames(text string, size int, face font.Face, fg, bg [3]uint8) []
 
 	// Scroll a pixel at a time for smoothness, stepping wider only when the
 	// frame count would exceed what the device stores. Longer messages are
-	// therefore necessarily jumpier — the device's animation buffer, not a
-	// stylistic choice, is what sets the ceiling.
+	// therefore jumpier, but only past a few hundred pixels of travel.
 	speed := 1
 	for scrollFrames(width, size, speed) > maxAnimationFrames {
 		speed *= 2

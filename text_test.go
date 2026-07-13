@@ -47,8 +47,8 @@ func TestRenderTextFrames(t *testing.T) {
 
 func TestRenderTextFramesLongTextCapped(t *testing.T) {
 	frames := renderTextFrames("THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG", 32, basicfont.Face7x13, [3]uint8{255, 0, 0}, [3]uint8{0, 0, 0})
-	if len(frames) > 60 {
-		t.Fatalf("got %d frames, want <= 60", len(frames))
+	if len(frames) > maxAnimationFrames {
+		t.Fatalf("got %d frames, want <= %d (the frame budget)", len(frames), maxAnimationFrames)
 	}
 }
 

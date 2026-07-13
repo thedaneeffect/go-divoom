@@ -32,6 +32,28 @@ Frames pushed as repeated single-image commands (`0x44`), paced at a target rate
 
 **Pushing frames unthrottled wedges the device's Bluetooth stack.** Writes queue locally, the channel dies (`IOReturn 0xe00002e7`), and afterwards the device refuses all RFCOMM opens (`0xe00002d6`) — a host-side `blueutil --disconnect` does NOT clear it; only a device power-cycle does. Any live-streaming feature must pace sends and treat the device as a slow consumer (bench: `Flush()`-based backlog detection).
 
+## The "60-frame animation limit" does not exist (2026-07-12)
+
+The reference implementation warns that animations over 60 frames are "very likely cut off", and this project inherited that number on faith. It is wrong.
+
+Measured with a counter animation — each frame displays its own index, so truncation is directly observable by reading the highest number the device reaches before looping:
+
+| Upload | Writes | Highest frame played |
+|---|---|---|
+| 60 frames, 8-color (~416 B/frame) | unpaced | **4** |
+| 40 frames, 2-color (~142 B/frame) | unpaced | **22** |
+| 60 frames, 8-color | paced 20ms/chunk | **60** (all) |
+| 120 frames, 2-color (~17 KB) | paced | **120** (all) |
+| 240 frames, 2-color (~34 KB) | paced | **240** (all) |
+
+Neither a frame cap nor a byte cap explains the unpaced numbers (4 × 416 B = 1.7 KB, but 22 × 142 B = 3.1 KB — no constant). **The truncation was receive-buffer overrun, not storage.** The device has no flow control on the animation path: it acknowledges nothing, and writes arriving faster than it consumes them are dropped silently. The animation "uploads successfully" and plays back short.
+
+Consequences:
+
+- `chunkPacing` (20 ms between messages of a multi-message upload) is load-bearing. Removing it silently truncates animations again.
+- No storage ceiling was found up to 240 frames / 34 KB. `maxAnimationFrames` is a *budget* (bounding upload time), not a device limit.
+- This is the same failure mode as the unthrottled frame-push benchmark below: flood the device and it drops, then wedges. Pace everything.
+
 ## Findings
 
 1. **Silent-drop defect (fixed).** Writes to `/dev/cu.*` succeed even when the RFCOMM link never establishes; commands vanish. Fix: `Device.Ping()` — a get-view request/response roundtrip used as a link-up barrier, with up to 3 retries because the first write after open can be swallowed during channel establishment. CLI and server both ping after dialing; failure is loud (`no response from device (link not established?)`).
