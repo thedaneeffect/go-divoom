@@ -14,7 +14,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
-	"github.com/thedaneeffect/go-divoom/pkg/divoom"
+	divoom "github.com/thedaneeffect/go-divoom"
 )
 
 func main() {

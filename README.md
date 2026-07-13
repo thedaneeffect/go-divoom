@@ -63,7 +63,7 @@ Settings persist to `~/.config/go-divoom/config.json`, editable via `divoom use 
 ## Library
 
 ```go
-import "github.com/thedaneeffect/go-divoom/pkg/divoom"
+import divoom "github.com/thedaneeffect/go-divoom"
 
 func main() {
 	divoom.RunEventLoop(func() { // see "macOS RFCOMM contract" below
@@ -89,7 +89,7 @@ dispatch queue**, so on macOS `DialRFCOMM` only works while
   `RunEventLoop` is a plain pass-through that just calls the function, so
   the same code stays portable. Sequential `RunEventLoop` calls are
   supported.
-- Importing `pkg/divoom` in a darwin cgo build pins the main goroutine to
+- Importing this package in a darwin cgo build pins the main goroutine to
   the main OS thread (`runtime.LockOSThread` in an `init`); this is what
   guarantees `RunEventLoop` runs on the thread macOS requires.
 - If a process is killed mid-connection, macOS can leave the baseband (ACL)
@@ -109,7 +109,7 @@ See `docs/superpowers/specs/hardware-smoke.md` for the full validation log.
 
 Divoom publishes no documentation for the Pixoo Max's Bluetooth protocol. Everything here rests on prior reverse-engineering work by others:
 
-- **[hass-divoom](https://github.com/d03n3rfr1tz3/hass-divoom)** (d03n3rfr1tz3) — the most complete implementation of the Divoom Bluetooth binary protocol. It is the reference this project is validated against: `pkg/divoom/testdata/gen_goldens.py` runs hass-divoom's own encoder to generate the golden byte fixtures that every encoding test asserts, so the wire format is verified byte-for-byte rather than by eye.
+- **[hass-divoom](https://github.com/d03n3rfr1tz3/hass-divoom)** (d03n3rfr1tz3) — the most complete implementation of the Divoom Bluetooth binary protocol. It is the reference this project is validated against: `testdata/gen_goldens.py` runs hass-divoom's own encoder to generate the golden byte fixtures that every encoding test asserts, so the wire format is verified byte-for-byte rather than by eye.
 - **[divoom-pixoo-max-nodejs](https://github.com/jakobwesthoff/divoom-pixoo-max-nodejs)** (Jakob Westhoff) — a clear reference for message framing, the rolling checksum, and the palette / bit-packed frame encoding.
 - **[node-divoom-timebox-evo](https://github.com/RomRider/node-divoom-timebox-evo)** (RomRider) — documented the pixel-string encoding that the frame format builds on.
 - **[Pixoo64-Advanced-Tools](https://github.com/tidyhf/Pixoo64-Advanced-Tools)** (tidyhf) — the Python toolset that prompted this rewrite. It targets the Pixoo 64, which speaks a *different* protocol (WiFi HTTP/JSON); discovering that the Pixoo Max is Bluetooth-only redirected the whole project.

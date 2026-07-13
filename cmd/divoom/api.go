@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thedaneeffect/go-divoom/pkg/divoom"
+	divoom "github.com/thedaneeffect/go-divoom"
 )
 
 // server owns a lazily-dialed device connection behind an HTTP API.

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thedaneeffect/go-divoom/pkg/divoom"
+	divoom "github.com/thedaneeffect/go-divoom"
 )
 
 // --- daemonBaseURL -----------------------------------------------------

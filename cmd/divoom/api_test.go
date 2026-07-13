@@ -17,7 +17,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/thedaneeffect/go-divoom/pkg/divoom"
+	divoom "github.com/thedaneeffect/go-divoom"
 )
 
 // pingCommandHex is the wire bytes for makeCommand(0x46, nil), i.e. the
@@ -27,7 +27,7 @@ import (
 const pingCommandHex = "01030046490002"
 
 // pingResponseHex is a real hardware reply to pingCommandHex, captured from
-// a Pixoo Max over Bluetooth serial (see pkg/divoom/device_test.go).
+// a Pixoo Max over Bluetooth serial (see device_test.go in the root package).
 const pingResponseHex = "011b00044655000001ff5000640001026400ffffff000100000024150c0602"
 
 // fakeConn records writes and satisfies divoom.Transport. Read answers the
