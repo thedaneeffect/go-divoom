@@ -533,3 +533,29 @@ func TestBrightnessCommandFallsBackWithoutDaemon(t *testing.T) {
 		t.Error("direct transport received no bytes")
 	}
 }
+
+func TestDaemonTimeRequest(t *testing.T) {
+	var method, path string
+	var body []byte
+	srv := captureRequest(t, &method, &path, &body)
+	defer srv.Close()
+
+	ts := time.Date(2026, 7, 12, 15, 4, 5, 0, time.UTC)
+	if err := daemonTime(srv.URL, ts); err != nil {
+		t.Fatal(err)
+	}
+	if method != "POST" || path != "/api/time" {
+		t.Errorf("got %s %s, want POST /api/time", method, path)
+	}
+	var got struct {
+		Time string `json:"time"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	// The CLI's instant must survive the hop verbatim; the daemon must not
+	// substitute its own clock.
+	if got.Time != "2026-07-12T15:04:05Z" {
+		t.Errorf("time = %q, want 2026-07-12T15:04:05Z", got.Time)
+	}
+}

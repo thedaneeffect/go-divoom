@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // runCapture runs the CLI dispatcher against fresh stdout/stderr buffers and
@@ -256,5 +257,33 @@ func TestValidateMAC(t *testing.T) {
 		if (err != nil) != tc.wantErr {
 			t.Errorf("validateMAC(%q) error = %v, wantErr %v", tc.in, err, tc.wantErr)
 		}
+	}
+}
+
+func TestParseTimeArg(t *testing.T) {
+	now := time.Now()
+
+	got, err := parseTimeArg("15:04")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A bare time of day means today, not year zero.
+	if got.Year() != now.Year() || got.Month() != now.Month() || got.Day() != now.Day() {
+		t.Errorf("bare time landed on %s, want today's date", got.Format(time.RFC3339))
+	}
+	if got.Hour() != 15 || got.Minute() != 4 {
+		t.Errorf("got %02d:%02d, want 15:04", got.Hour(), got.Minute())
+	}
+
+	got, err = parseTimeArg("2026-07-12 15:04:05")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Year() != 2026 || got.Day() != 12 || got.Second() != 5 {
+		t.Errorf("got %s, want 2026-07-12 15:04:05", got.Format(time.RFC3339))
+	}
+
+	if _, err := parseTimeArg("half past four"); err == nil {
+		t.Error("want an error for an unparseable time")
 	}
 }

@@ -35,6 +35,7 @@ func newServer(cfg Config, dialer func(Config) (divoom.Transport, error)) *serve
 	s.mux.HandleFunc("POST /api/screen", s.handleScreen)
 	s.mux.HandleFunc("POST /api/light", s.handleLight)
 	s.mux.HandleFunc("POST /api/clock", s.handleClock)
+	s.mux.HandleFunc("POST /api/time", s.handleTime)
 	s.mux.HandleFunc("POST /api/text", s.handleText)
 	s.mux.HandleFunc("POST /api/image", s.handleImage)
 	return s
@@ -284,6 +285,29 @@ func (s *server) handleLight(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.withDevice(w, func(d *divoom.Device) error { return d.ShowLight(rgb, brightness, true) })
+}
+
+// handleTime sets the device's internal clock. An omitted or empty "time" means
+// now; a supplied RFC3339 timestamp is applied verbatim, so a CLI on another
+// machine can push its own instant rather than the daemon's.
+func (s *server) handleTime(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Time string `json:"time"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, err)
+		return
+	}
+	ts := time.Now()
+	if req.Time != "" {
+		parsed, err := time.Parse(time.RFC3339, req.Time)
+		if err != nil {
+			jsonError(w, http.StatusBadRequest, fmt.Errorf("time must be RFC3339: %w", err))
+			return
+		}
+		ts = parsed
+	}
+	s.withDevice(w, func(d *divoom.Device) error { return d.SetDateTime(ts) })
 }
 
 func (s *server) handleClock(w http.ResponseWriter, r *http.Request) {

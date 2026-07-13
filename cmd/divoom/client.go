@@ -134,6 +134,13 @@ func daemonClock(baseURL string, style int, twentyFour bool) error {
 	return daemonPostJSON(baseURL, "/api/clock", map[string]any{"style": style, "twentyFour": twentyFour})
 }
 
+// daemonTime posts to POST /api/time (see handleTime). The timestamp is sent as
+// RFC3339 so the daemon applies exactly the instant the CLI resolved, rather
+// than re-reading its own clock.
+func daemonTime(baseURL string, ts time.Time) error {
+	return daemonPostJSON(baseURL, "/api/time", map[string]any{"time": ts.Format(time.RFC3339)})
+}
+
 // daemonText posts to POST /api/text (see handleText).
 func daemonText(baseURL, text string) error {
 	return daemonPostJSON(baseURL, "/api/text", map[string]any{"text": text})

@@ -179,6 +179,51 @@ func cmdOff(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer)
 	)
 }
 
+// cmdTime syncs the device's own clock. The Pixoo has no network time source of
+// its own, so its clock faces show whatever was last pushed to it — this is the
+// only way to correct them.
+func cmdTime(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
+	ts := time.Now()
+	if len(args) > 0 && args[0] != "now" {
+		// Accept a full timestamp or just a wall-clock time for today.
+		parsed, err := parseTimeArg(args[0])
+		if err != nil {
+			return err
+		}
+		ts = parsed
+	}
+	return routeCommand(cfg, flags,
+		func(baseURL string) error { return daemonTime(baseURL, ts) },
+		func(d *divoom.Device) error { return d.SetDateTime(ts) },
+	)
+}
+
+// parseTimeArg accepts RFC3339 ("2026-07-12T15:04:05Z"), a local datetime
+// ("2026-07-12 15:04"), or a bare time of day ("15:04") meaning today.
+func parseTimeArg(s string) (time.Time, error) {
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"15:04:05",
+		"15:04",
+	}
+	for _, layout := range layouts {
+		t, err := time.ParseInLocation(layout, s, time.Local)
+		if err != nil {
+			continue
+		}
+		// The time-only layouts parse to year zero; graft them onto today.
+		if t.Year() == 0 {
+			now := time.Now()
+			t = time.Date(now.Year(), now.Month(), now.Day(),
+				t.Hour(), t.Minute(), t.Second(), 0, time.Local)
+		}
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("cannot parse time %q: use 'now', '15:04', '2006-01-02 15:04', or RFC3339", s)
+}
+
 func cmdClock(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
 	style := 0
 	if len(args) > 0 {

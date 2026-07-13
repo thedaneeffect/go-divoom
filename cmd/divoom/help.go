@@ -113,12 +113,25 @@ var commands = []command{
 		name:  "clock",
 		args:  "[style]",
 		short: "show a clock face (style 0-15, default 0)",
-		long:  "Shows a clock face. style selects one of the device's built-in clock faces (0-15); it defaults to 0 if omitted.",
+		long:  "Shows a clock face. style selects one of the device's built-in clock faces (0-15); it defaults to 0 if omitted. This only chooses the face — to correct the time it shows, use `divoom time`.",
 		examples: []string{
 			"divoom clock",
 			"divoom clock 3",
 		},
 		run: cmdClock,
+	},
+	{
+		name:  "time",
+		args:  "[when]",
+		short: "set the device's clock (defaults to now)",
+		long: "Sets the device's internal clock. The Pixoo has no time source of its own, so its clock faces keep showing whatever was last pushed to it — run this whenever the clock is wrong or has drifted.\n\n" +
+			"when defaults to the current local time. It also accepts a bare time of day (15:04), a local datetime (2006-01-02 15:04), or an RFC3339 timestamp.",
+		examples: []string{
+			"divoom time",
+			"divoom time 15:04",
+			"divoom time '2026-07-12 15:04:05'",
+		},
+		run: cmdTime,
 	},
 	{
 		name:  "light",
