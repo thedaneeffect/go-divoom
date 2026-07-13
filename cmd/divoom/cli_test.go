@@ -249,7 +249,7 @@ func TestValidateMAC(t *testing.T) {
 		{"AA-BB-CC-DD-EE-FF", false},
 		{"not-a-mac", true},
 		{"", true},
-		{"11:75:58:7D:38", true}, // too short
+		{"AA:BB:CC:DD:EE", true}, // too short
 	}
 	for _, tc := range cases {
 		err := validateMAC(tc.in)

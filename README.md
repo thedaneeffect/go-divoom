@@ -51,7 +51,12 @@ One-shot CLI (dials directly when no daemon is running; pass `-direct` to force 
 # macOS serial fallback: replace -mac ... with -serial /dev/cu.Pixoo-Max
 ```
 
-Without a daemon running, leave a few seconds between separate one-shot invocations — the device needs time to settle before it accepts another connection.
+Routing through the daemon is not a small win: on real hardware a one-shot command takes **~4.8 s** dialing directly (open RFCOMM, ping, settle) versus **~13 ms** through a running daemon.
+
+Two consequences of the device accepting only one RFCOMM channel at a time:
+
+- Without a daemon running, leave several seconds between separate one-shot invocations — the device needs time to settle before it accepts another connection.
+- While the daemon is running it holds that only connection, so `-direct` is refused rather than honored. Dialing a second channel alongside it wedges the device's Bluetooth stack until it is power-cycled.
 
 Settings persist to `~/.config/go-divoom/config.json`, editable via `divoom use <mac>` or the JSON API's `PUT /api/config`.
 
@@ -102,4 +107,26 @@ See `docs/superpowers/specs/hardware-smoke.md` for the full validation log.
 
 ## Credits
 
-Protocol reverse-engineering by the [hass-divoom](https://github.com/d03n3rfr1tz3/hass-divoom) and [divoom-pixoo-max-nodejs](https://github.com/jakobwesthoff/divoom-pixoo-max-nodejs) projects. Golden test fixtures are generated from hass-divoom's reference implementation (`pkg/divoom/testdata/gen_goldens.py`).
+Divoom publishes no documentation for the Pixoo Max's Bluetooth protocol. Everything here rests on prior reverse-engineering work by others:
+
+- **[hass-divoom](https://github.com/d03n3rfr1tz3/hass-divoom)** (d03n3rfr1tz3) — the most complete implementation of the Divoom Bluetooth binary protocol. It is the reference this project is validated against: `pkg/divoom/testdata/gen_goldens.py` runs hass-divoom's own encoder to generate the golden byte fixtures that every encoding test asserts, so the wire format is verified byte-for-byte rather than by eye.
+- **[divoom-pixoo-max-nodejs](https://github.com/jakobwesthoff/divoom-pixoo-max-nodejs)** (Jakob Westhoff) — a clear reference for message framing, the rolling checksum, and the palette / bit-packed frame encoding.
+- **[node-divoom-timebox-evo](https://github.com/RomRider/node-divoom-timebox-evo)** (RomRider) — documented the pixel-string encoding that the frame format builds on.
+- **[Pixoo64-Advanced-Tools](https://github.com/tidyhf/Pixoo64-Advanced-Tools)** (tidyhf) — the Python toolset that prompted this rewrite. It targets the Pixoo 64, which speaks a *different* protocol (WiFi HTTP/JSON); discovering that the Pixoo Max is Bluetooth-only redirected the whole project.
+
+The macOS transport is original work: `SOCKADDR_BTH` byte order was cross-checked against Microsoft's documentation and the [32feet.NET](https://github.com/inthehand/32feet) implementation, and the IOBluetooth main-queue callback behavior was established empirically against real hardware (see `docs/superpowers/specs/2026-07-11-darwin-iobluetooth-transport.md`).
+
+## How this was built
+
+This project was written by **Claude** (Anthropic) in [Claude Code](https://claude.com/claude-code), directed by a human who owned the hardware, made every product decision, and verified each change on the physical device.
+
+- **Claude Fable 5** led the session: surveying the reference implementations, designing the architecture, coordinating the work, reviewing diffs, and doing the hardware debugging.
+- **Claude Sonnet** and **Claude Haiku** ran as subagents for implementation and code review, one task at a time, each change gated by an independent review pass before it landed.
+
+Work followed a spec → plan → test-driven-implementation → review loop; specs and plans are preserved under `docs/superpowers/`. The interesting parts of this codebase came from hardware disagreeing with the design, not from the plan:
+
+- The device's protocol was validated against golden bytes generated from a reference implementation *before* any encoder code was written.
+- The approved macOS design (a dedicated Bluetooth runloop thread) turned out to be impossible — modern IOBluetooth delivers all callbacks on the main dispatch queue — and was replaced only after minimal reproductions and `bluetoothd` logs proved it.
+- Several bugs were only findable on real hardware: writes to `/dev/cu.*` that "succeed" into a dead link, RFCOMM channels torn down before the device consumed the command, and unthrottled frame pushes that wedge the device's Bluetooth stack. Each is now a barrier, a guard, or a documented limit.
+
+Nothing in this repository was claimed to work without being run against a real Pixoo Max.

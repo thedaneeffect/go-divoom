@@ -7,7 +7,7 @@ func TestParseMAC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := [6]byte{0x11, 0x75, 0x58, 0x7D, 0x38, 0x4C}
+	want := [6]byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
 	if got != want {
 		t.Errorf("got %x, want %x", got, want)
 	}
