@@ -86,6 +86,29 @@ func loadFace(path string, size float64) (font.Face, error) {
 	return face, nil
 }
 
+// ValidateFont reports whether path parses as a TTF/OTF file at the given
+// size, without retaining the resulting face. path == "" (no font
+// requested) is always valid.
+//
+// This exists so a caller that holds a long-lived, reusable device
+// connection — namely the HTTP daemon's handleText — can check a font path
+// before ever touching the device. Without it, a bad -font value surfaces as
+// an error from inside ShowText indistinguishable, to a generic
+// error-means-drop-the-connection handler, from a genuine transport
+// failure: it would tear down and force a reconnect of a perfectly healthy
+// Bluetooth link over what is actually just a client input mistake
+// (reproduced against real hardware).
+func ValidateFont(path string, size float64) error {
+	if path == "" {
+		return nil
+	}
+	face, err := loadFace(path, size)
+	if err != nil {
+		return err
+	}
+	return face.Close()
+}
+
 // ShowText scrolls text across the display as an animation.
 func (d *Device) ShowText(text string, o TextOptions) error {
 	if o.Color == [3]uint8{} {

@@ -126,6 +126,40 @@ func TestShowTextInvalidFontPathErrors(t *testing.T) {
 	}
 }
 
+// TestValidateFontEmptyPathOK asserts an empty path (no font requested) is
+// always valid — ValidateFont must not require a font to be present.
+func TestValidateFontEmptyPathOK(t *testing.T) {
+	if err := ValidateFont("", 0); err != nil {
+		t.Errorf("ValidateFont(\"\", 0) = %v, want nil", err)
+	}
+}
+
+// TestValidateFontValidPath asserts a real font loads cleanly.
+func TestValidateFontValidPath(t *testing.T) {
+	if err := ValidateFont(testFontPath(t), 16); err != nil {
+		t.Errorf("ValidateFont on a valid TTF = %v, want nil", err)
+	}
+}
+
+// TestValidateFontMissingOrCorrupt guards the reason ValidateFont exists:
+// callers like the HTTP daemon need to distinguish "bad font input" from "a
+// device fault" before ever touching the device, so this must return a
+// clear error (never panic) for both a missing file and a corrupt one.
+func TestValidateFontMissingOrCorrupt(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist.ttf")
+	if err := ValidateFont(missing, 16); err == nil {
+		t.Error("expected an error for a missing font file")
+	}
+
+	garbage := filepath.Join(t.TempDir(), "garbage.ttf")
+	if err := os.WriteFile(garbage, []byte("not a font"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateFont(garbage, 16); err == nil {
+		t.Error("expected an error for a corrupt font file")
+	}
+}
+
 // color32 is a hashable RGBA color used to collect distinct colors seen
 // across a set of frames.
 type color32 struct{ r, g, b, a uint32 }

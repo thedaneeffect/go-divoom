@@ -339,6 +339,14 @@ func (s *server) handleClock(w http.ResponseWriter, r *http.Request) {
 // Font is a path resolved on this process's host (the daemon's machine, not
 // necessarily wherever the client that sent the request is running), and
 // Size is its point size (zero uses ShowText's built-in default).
+//
+// Font is validated before s.withDevice is ever called (mirroring
+// handleImage, which decodes its upload before touching the device): a bad
+// path is a client input error (400), not a device fault, and
+// s.withDevice's dropDevice treats any error from the function it runs as
+// grounds to close and force a reconnect of the persistent device
+// connection — indiscriminately doing that for a typo'd -font would drop a
+// perfectly healthy Bluetooth link for no reason (see divoom.ValidateFont).
 func (s *server) handleText(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Text string  `json:"text"`
@@ -351,6 +359,10 @@ func (s *server) handleText(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Text == "" {
 		jsonError(w, http.StatusBadRequest, fmt.Errorf("text is required"))
+		return
+	}
+	if err := divoom.ValidateFont(req.Font, req.Size); err != nil {
+		jsonError(w, http.StatusBadRequest, err)
 		return
 	}
 	s.withDevice(w, func(d *divoom.Device) error {

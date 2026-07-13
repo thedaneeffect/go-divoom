@@ -376,31 +376,22 @@ func TestTextEndpointDefaultFont(t *testing.T) {
 	}
 }
 
-// TestTextEndpointInvalidFontIs502 asserts a font path handleText can't load
-// surfaces as a device/upstream failure (502), the same way any other
-// ShowText error does via s.withDevice — not a 400, since the request body
-// itself was well-formed.
-func TestTextEndpointInvalidFontIs502(t *testing.T) {
+// TestTextEndpointInvalidFontIs400 asserts a font path handleText can't load
+// is a client input error (400) caught by divoom.ValidateFont before the
+// device is ever touched — not a 502, and critically, the device connection
+// (fc) must receive zero bytes: a bad -font must never be indistinguishable
+// from a device fault to server.withDevice's dropDevice, which would
+// otherwise tear down a perfectly healthy connection over a client typo
+// (reproduced against real hardware during development of this feature).
+func TestTextEndpointInvalidFontIs400(t *testing.T) {
 	srv, fc := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/text", bytes.NewBufferString(`{"text":"hi","font":"/does/not/exist.ttf"}`))
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
-	if w.Code != http.StatusBadGateway {
-		t.Errorf("status = %d, want 502: %s", w.Code, w.Body)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400: %s", w.Code, w.Body)
 	}
-	if fc.Len() != pingCommandLen(t) {
-		t.Errorf("transport received %d bytes, want only the ping barrier (font load must fail before any animation write)", fc.Len())
+	if fc.Len() != 0 {
+		t.Errorf("transport received %d bytes, want 0 (device must never be touched for a font validation failure)", fc.Len())
 	}
-}
-
-// pingCommandLen returns the byte length of the ping-barrier wire command
-// every handler call performs via server.device(), so tests can assert
-// "nothing beyond the ping was written" without hardcoding the length twice.
-func pingCommandLen(t *testing.T) int {
-	t.Helper()
-	b, err := hex.DecodeString(pingCommandHex)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return len(b)
 }
