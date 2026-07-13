@@ -245,20 +245,57 @@ func TestDaemonTextRequest(t *testing.T) {
 	srv := captureRequest(t, &method, &path, &body)
 	defer srv.Close()
 
-	if err := daemonText(srv.URL, "hello world"); err != nil {
+	if err := daemonText(srv.URL, "hello world", divoom.TextOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if method != "POST" || path != "/api/text" {
 		t.Errorf("got %s %s, want POST /api/text", method, path)
 	}
 	var got struct {
-		Text string `json:"text"`
+		Text string  `json:"text"`
+		Font string  `json:"font"`
+		Size float64 `json:"size"`
 	}
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatal(err)
 	}
 	if got.Text != "hello world" {
 		t.Errorf("text = %q, want %q", got.Text, "hello world")
+	}
+	if got.Font != "" || got.Size != 0 {
+		t.Errorf("font/size = %q/%v, want empty/0 when TextOptions is zero", got.Font, got.Size)
+	}
+}
+
+// TestDaemonTextRequestWithFont asserts a FontPath/FontSize TextOptions
+// flows into the JSON body's "font"/"size" fields, which handleText (api.go)
+// reads to build the server-side TextOptions.
+func TestDaemonTextRequestWithFont(t *testing.T) {
+	var method, path string
+	var body []byte
+	srv := captureRequest(t, &method, &path, &body)
+	defer srv.Close()
+
+	opts := divoom.TextOptions{FontPath: "/path/to/font.ttf", FontSize: 24}
+	if err := daemonText(srv.URL, "hello world", opts); err != nil {
+		t.Fatal(err)
+	}
+	if method != "POST" || path != "/api/text" {
+		t.Errorf("got %s %s, want POST /api/text", method, path)
+	}
+	var got struct {
+		Text string  `json:"text"`
+		Font string  `json:"font"`
+		Size float64 `json:"size"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Font != opts.FontPath {
+		t.Errorf("font = %q, want %q", got.Font, opts.FontPath)
+	}
+	if got.Size != opts.FontSize {
+		t.Errorf("size = %v, want %v", got.Size, opts.FontSize)
 	}
 }
 

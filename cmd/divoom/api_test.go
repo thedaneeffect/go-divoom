@@ -347,3 +347,60 @@ func TestImageUpload(t *testing.T) {
 		t.Errorf("wire bytes:\ngot  %x\nwant %x", fc.Bytes(), want)
 	}
 }
+
+func TestTextEndpointRequiresText(t *testing.T) {
+	srv, fc := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/text", bytes.NewBufferString(`{}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	if fc.Len() != 0 {
+		t.Errorf("transport received %d bytes, want 0", fc.Len())
+	}
+}
+
+// TestTextEndpointDefaultFont asserts a bare {"text": ...} request (no font)
+// still uploads an animation, matching the pre-existing behavior.
+func TestTextEndpointDefaultFont(t *testing.T) {
+	srv, fc := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/text", bytes.NewBufferString(`{"text":"hi"}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if fc.Len() == 0 {
+		t.Error("transport received no bytes")
+	}
+}
+
+// TestTextEndpointInvalidFontIs502 asserts a font path handleText can't load
+// surfaces as a device/upstream failure (502), the same way any other
+// ShowText error does via s.withDevice — not a 400, since the request body
+// itself was well-formed.
+func TestTextEndpointInvalidFontIs502(t *testing.T) {
+	srv, fc := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/text", bytes.NewBufferString(`{"text":"hi","font":"/does/not/exist.ttf"}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502: %s", w.Code, w.Body)
+	}
+	if fc.Len() != pingCommandLen(t) {
+		t.Errorf("transport received %d bytes, want only the ping barrier (font load must fail before any animation write)", fc.Len())
+	}
+}
+
+// pingCommandLen returns the byte length of the ping-barrier wire command
+// every handler call performs via server.device(), so tests can assert
+// "nothing beyond the ping was written" without hardcoding the length twice.
+func pingCommandLen(t *testing.T) int {
+	t.Helper()
+	b, err := hex.DecodeString(pingCommandHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(b)
+}

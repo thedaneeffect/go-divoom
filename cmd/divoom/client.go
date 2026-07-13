@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	divoom "github.com/thedaneeffect/go-divoom"
 )
 
 // daemonProbeTimeout bounds how long daemonAvailable waits to hear back
@@ -141,9 +143,18 @@ func daemonTime(baseURL string, ts time.Time) error {
 	return daemonPostJSON(baseURL, "/api/time", map[string]any{"time": ts.Format(time.RFC3339)})
 }
 
-// daemonText posts to POST /api/text (see handleText).
-func daemonText(baseURL, text string) error {
-	return daemonPostJSON(baseURL, "/api/text", map[string]any{"text": text})
+// daemonText posts to POST /api/text (see handleText). o.FontPath, if set, is
+// a path resolved on the daemon's host — not necessarily the machine running
+// this CLI — since that's where handleText actually opens the file.
+func daemonText(baseURL, text string, o divoom.TextOptions) error {
+	body := map[string]any{"text": text}
+	if o.FontPath != "" {
+		body["font"] = o.FontPath
+	}
+	if o.FontSize != 0 {
+		body["size"] = o.FontSize
+	}
+	return daemonPostJSON(baseURL, "/api/text", body)
 }
 
 // daemonSendImage uploads an image file to the daemon's POST /api/image as

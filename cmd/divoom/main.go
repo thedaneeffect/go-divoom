@@ -140,14 +140,34 @@ func cmdSend(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer
 	)
 }
 
+// textUsage is cmdText's own usage string, shown both by its local flag.FlagSet
+// (on a parse error or -h) and when no message text is given.
+const textUsage = "usage: divoom text [-font <path>] [-size <points>] <message>"
+
+// cmdText parses its own -font/-size flags with a per-command FlagSet: unlike
+// every other command, text takes optional flags in addition to its
+// positional argument, and the shared dispatch table (see help.go) only
+// passes each command its raw arg slice, so flag parsing has to happen here
+// rather than centrally.
 func cmdText(cfg Config, flags cliFlags, args []string, stdout, stderr io.Writer) error {
-	if len(args) < 1 {
-		return fmt.Errorf("usage: divoom text <message>")
+	fs := flag.NewFlagSet("text", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() { fmt.Fprintln(stderr, textUsage) }
+	fontPath := fs.String("font", "", "path to a TTF/OTF font file (resolved on the machine that renders the frames)")
+	fontSize := fs.Float64("size", 0, "font point size (default 16); ignored without -font")
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
-	text := strings.Join(args, " ")
+
+	rest := fs.Args()
+	if len(rest) < 1 {
+		return fmt.Errorf("%s", textUsage)
+	}
+	text := strings.Join(rest, " ")
+	opts := divoom.TextOptions{FontPath: *fontPath, FontSize: *fontSize}
 	return routeCommand(cfg, flags,
-		func(baseURL string) error { return daemonText(baseURL, text) },
-		func(d *divoom.Device) error { return d.ShowText(text, divoom.TextOptions{}) },
+		func(baseURL string) error { return daemonText(baseURL, text, opts) },
+		func(d *divoom.Device) error { return d.ShowText(text, opts) },
 	)
 }
 

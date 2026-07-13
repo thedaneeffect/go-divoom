@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/image/font/gofont/goregular"
 )
 
 // runCapture runs the CLI dispatcher against fresh stdout/stderr buffers and
@@ -285,5 +287,99 @@ func TestParseTimeArg(t *testing.T) {
 
 	if _, err := parseTimeArg("half past four"); err == nil {
 		t.Error("want an error for an unparseable time")
+	}
+}
+
+// writeTestFont writes the Go Regular TTF (compiled into golang.org/x/image,
+// already a dependency, so this needs no system font path and works on any
+// OS/CI) to a temp file and returns its path.
+func writeTestFont(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "test-font.ttf")
+	if err := os.WriteFile(path, goregular.TTF, 0o644); err != nil {
+		t.Fatalf("write test font: %v", err)
+	}
+	return path
+}
+
+// TestCmdTextRequiresMessage asserts `divoom text` with no message (with or
+// without flags) fails with a usage error before ever touching the daemon
+// probe or a device — cmdText's own flag.FlagSet validates this locally.
+func TestCmdTextRequiresMessage(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	stdout, stderr, code := runCapture(t, []string{"text"})
+	if code == 0 {
+		t.Fatalf("exit code = 0, want nonzero; stdout=%q stderr=%q", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "usage: divoom text") {
+		t.Errorf("stderr = %q, want it to contain %q", stderr, "usage: divoom text")
+	}
+}
+
+// TestCmdTextUnknownFlagFails asserts an unrecognized flag is rejected by
+// cmdText's own FlagSet rather than silently swallowed into the message text.
+func TestCmdTextUnknownFlagFails(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	_, stderr, code := runCapture(t, []string{"text", "-bogus", "hello"})
+	if code == 0 {
+		t.Fatalf("exit code = 0, want nonzero; stderr=%q", stderr)
+	}
+}
+
+// TestCmdTextFontAndSizeFlagsRouteThroughDirect is an end-to-end check that
+// -font/-size parse correctly and flow all the way through
+// cmdText -> routeCommand -> ShowText -> a wire-level animation upload, the
+// same shape TestBrightnessCommandFallsBackWithoutDaemon checks for
+// brightness. The daemon probe is faked down so this exercises the direct
+// dial fallback without a real listener.
+func TestCmdTextFontAndSizeFlagsRouteThroughDirect(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	fakeProbe(t, false)
+	fc := &alwaysRespondingConn{}
+	fakeDial(t, fc)
+
+	fontPath := writeTestFont(t)
+	stdout, stderr, code := runCapture(t, []string{"text", "-font", fontPath, "-size", "20", "hi"})
+	if code != 0 {
+		t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if fc.Len() == 0 {
+		t.Error("direct transport received no bytes; -font/-size never reached ShowText")
+	}
+}
+
+// TestCmdTextInvalidFontPathSurfacesError asserts a bad -font path fails the
+// command with a clear error (via loadFace) instead of panicking or
+// silently falling back to the built-in font.
+func TestCmdTextInvalidFontPathSurfacesError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	fakeProbe(t, false)
+	fakeDial(t, &alwaysRespondingConn{})
+
+	missing := filepath.Join(t.TempDir(), "does-not-exist.ttf")
+	_, stderr, code := runCapture(t, []string{"text", "-font", missing, "hi"})
+	if code == 0 {
+		t.Fatalf("exit code = 0, want nonzero for a missing font path; stderr=%q", stderr)
+	}
+	if !strings.Contains(stderr, "load font") {
+		t.Errorf("stderr = %q, want it to mention %q", stderr, "load font")
+	}
+}
+
+// TestCmdTextDefaultFontStillWorks guards the no-regression requirement:
+// `divoom text` without -font must keep using the built-in bitmap font
+// exactly as before.
+func TestCmdTextDefaultFontStillWorks(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	fakeProbe(t, false)
+	fc := &alwaysRespondingConn{}
+	fakeDial(t, fc)
+
+	stdout, stderr, code := runCapture(t, []string{"text", "hello world"})
+	if code != 0 {
+		t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if fc.Len() == 0 {
+		t.Error("direct transport received no bytes")
 	}
 }

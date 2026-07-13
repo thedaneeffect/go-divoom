@@ -335,9 +335,15 @@ func (s *server) handleClock(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleText scrolls text across the display. Font and Size are optional:
+// Font is a path resolved on this process's host (the daemon's machine, not
+// necessarily wherever the client that sent the request is running), and
+// Size is its point size (zero uses ShowText's built-in default).
 func (s *server) handleText(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Text string `json:"text"`
+		Text string  `json:"text"`
+		Font string  `json:"font"`
+		Size float64 `json:"size"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, err)
@@ -348,7 +354,7 @@ func (s *server) handleText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.withDevice(w, func(d *divoom.Device) error {
-		return d.ShowText(req.Text, divoom.TextOptions{})
+		return d.ShowText(req.Text, divoom.TextOptions{FontPath: req.Font, FontSize: req.Size})
 	})
 }
 
