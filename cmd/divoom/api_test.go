@@ -160,7 +160,7 @@ func TestConcurrentRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -322,8 +322,8 @@ func TestImageUpload(t *testing.T) {
 	srv, fc := newTestServer(t)
 
 	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
+	for y := range 16 {
+		for x := range 16 {
 			img.Set(x, y, color.RGBA{255, 0, 0, 255})
 		}
 	}

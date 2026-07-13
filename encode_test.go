@@ -35,8 +35,8 @@ func TestPackPixels(t *testing.T) {
 func TestPaletteImage(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
 	red := color.RGBA{255, 0, 0, 255}
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
+	for y := range 16 {
+		for x := range 16 {
 			img.Set(x, y, red)
 		}
 	}
@@ -66,8 +66,8 @@ func TestPaletteImage(t *testing.T) {
 // RGBA channels. Premultiplied conversion would yield {100,0,0} here.
 func TestPaletteImageStraightAlpha(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
+	for y := range 16 {
+		for x := range 16 {
 			img.Set(x, y, color.NRGBA{255, 0, 0, 255})
 		}
 	}
@@ -94,8 +94,8 @@ func TestPaletteImageRejectsBadSize(t *testing.T) {
 
 func fill16(c color.RGBA) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
+	for y := range 16 {
+		for x := range 16 {
 			img.Set(x, y, c)
 		}
 	}
@@ -104,8 +104,8 @@ func fill16(c color.RGBA) image.Image {
 
 func checker32() image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
-	for y := 0; y < 32; y++ {
-		for x := 0; x < 32; x++ {
+	for y := range 32 {
+		for x := range 32 {
 			if (x+y)%2 == 0 {
 				img.Set(x, y, color.RGBA{0, 0, 0, 255})
 			} else {
@@ -187,8 +187,8 @@ func TestAnimationMessages(t *testing.T) {
 
 func fill32(c color.RGBA) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
-	for y := 0; y < 32; y++ {
-		for x := 0; x < 32; x++ {
+	for y := range 32 {
+		for x := range 32 {
 			img.Set(x, y, c)
 		}
 	}

@@ -18,8 +18,8 @@ func TestGifFramesCompositesDeltaOverFullCanvas(t *testing.T) {
 
 	// Frame 1 fully covers the canvas with red.
 	frame1 := image.NewPaletted(image.Rect(0, 0, w, h), pal)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			frame1.SetColorIndex(x, y, 1)
 		}
 	}
@@ -92,14 +92,14 @@ func TestGifFramesFallsBackWhenConfigIsZero(t *testing.T) {
 func TestGifFramesReturnsIndependentCopies(t *testing.T) {
 	pal := color.Palette{color.RGBA{255, 0, 0, 255}, color.RGBA{0, 255, 0, 255}}
 	frame1 := image.NewPaletted(image.Rect(0, 0, 4, 4), pal)
-	for y := 0; y < 4; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 4 {
+		for x := range 4 {
 			frame1.SetColorIndex(x, y, 0)
 		}
 	}
 	frame2 := image.NewPaletted(image.Rect(0, 0, 4, 4), pal)
-	for y := 0; y < 4; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 4 {
+		for x := range 4 {
 			frame2.SetColorIndex(x, y, 1)
 		}
 	}

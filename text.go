@@ -50,18 +50,12 @@ func renderTextFrames(text string, size int, fg, bg [3]uint8) []image.Image {
 	}
 	dr.DrawString(text)
 
-	speed := size / 16 // 2px per frame on a 32px screen
-	if speed < 1 {
-		speed = 1
-	}
+	speed := max(size/16, 1) // 2px per frame on a 32px screen
 	for (width-size)/speed > 60 {
 		speed *= 2
 	}
 
-	count := (width - size) / speed
-	if count < 1 {
-		count = 1
-	}
+	count := max((width-size)/speed, 1)
 	frames := make([]image.Image, 0, count)
 	for i := 0; i < count; i++ {
 		f := image.NewRGBA(image.Rect(0, 0, size, size))

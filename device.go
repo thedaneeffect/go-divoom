@@ -87,7 +87,7 @@ func (d *Device) roundtrip() error {
 	defer d.mu.Unlock()
 
 	var lastErr error
-	for i := 0; i < roundtripAttempts; i++ {
+	for range roundtripAttempts {
 		lastErr = d.roundtripOnce()
 		if lastErr == nil {
 			return nil
